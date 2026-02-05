@@ -291,8 +291,8 @@ final class MetalTerminalView: MTKView {
         let rows = terminal.rows
         let cols = terminal.cols
 
-        // Update dirty tracker if size changed
-        if let tracker = dirtyTracker, tracker.state == .clean && !needsFullRedraw {
+        // Skip if nothing changed
+        if let tracker = dirtyTracker, tracker.isClean && !needsFullRedraw {
             // Nothing to render
             return
         }
@@ -306,7 +306,7 @@ final class MetalTerminalView: MTKView {
         setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
 
         // Sync selection from SwiftTerm
-        syncSelection(from: terminal)
+        syncSelection()
 
         // Build cell instances
         let instances = cellGrid.buildInstances(from: terminal, rows: rows, cols: cols)
@@ -512,19 +512,22 @@ extension MetalTerminalView {
 // MARK: - Sync Helper
 
 extension MetalTerminalView {
-    /// Sync selection state from SwiftTerm
-    private func syncSelection(from terminal: Terminal) {
-        // Check if selection is active in SwiftTerm
-        if terminal.selection.active {
-            let start = terminal.selection.start
-            let end = terminal.selection.end
-            setSelection(
-                start: (row: start.row, col: start.col),
-                end: (row: end.row, col: end.col)
-            )
-        } else {
+    /// Sync selection state from SwiftTerm view
+    private func syncSelection() {
+        guard let terminalView = terminalView else {
+            setSelection(start: nil, end: nil)
+            return
+        }
+
+        // Get selection from LocalProcessTerminalView
+        // SwiftTerm uses getSelectedText() to check if there's selection
+        let selectedText = terminalView.getSelectedText()
+        if selectedText.isEmpty {
             setSelection(start: nil, end: nil)
         }
+        // Note: Selection bounds are handled internally by SwiftTerm view
+        // We don't have direct access to start/end coords, so selection
+        // highlighting relies on SwiftTerm's native rendering
     }
 
     /// Synchronize state from SwiftTerm view
@@ -539,7 +542,7 @@ extension MetalTerminalView {
         setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
 
         // Sync selection
-        syncSelection(from: terminal)
+        syncSelection()
 
         // Trigger redraw
         markAllDirty()

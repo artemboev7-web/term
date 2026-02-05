@@ -178,17 +178,13 @@ final class GlyphAtlas {
     private func renderGlyph(key: GlyphKey) -> GlyphInfo? {
         guard let context = cgContext, let texture = texture else { return nil }
 
-        // Get font variant
+        // Get font variant (NSFontManager.convert returns non-optional NSFont)
         var renderFont = font
         if key.flags & CellInstance.flagBold != 0 {
-            if let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) {
-                renderFont = bold
-            }
+            renderFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         }
         if key.flags & CellInstance.flagItalic != 0 {
-            if let italic = NSFontManager.shared.convert(renderFont, toHaveTrait: .italicFontMask) {
-                renderFont = italic
-            }
+            renderFont = NSFontManager.shared.convert(renderFont, toHaveTrait: .italicFontMask)
         }
 
         let ctFont = renderFont as CTFont

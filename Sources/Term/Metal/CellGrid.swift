@@ -111,14 +111,19 @@ final class CellGrid {
         // Determine colors from attribute
         let (fgColor, bgColor) = resolveColors(attribute: charData.attribute)
 
-        // Get glyph info
-        let isBold = charData.attribute.style.contains(.bold)
-        let isItalic = charData.attribute.style.contains(.italic)
+        // Check style flags using rawValue (CharacterStyle is OptionSet)
+        let styleRaw = charData.attribute.style.rawValue
+        let isBold = (styleRaw & CharacterStyle.bold.rawValue) != 0
+        let isItalic = (styleRaw & CharacterStyle.italic.rawValue) != 0
+        let isUnderline = (styleRaw & CharacterStyle.underline.rawValue) != 0
+        let isCrossedOut = (styleRaw & CharacterStyle.crossedOut.rawValue) != 0
+        let isInverse = (styleRaw & CharacterStyle.inverse.rawValue) != 0
+
         let glyphInfo = glyphAtlas.getGlyph(codepoint: codepoint, bold: isBold, italic: isItalic)
 
         // Build flags
         var flags: UInt32 = 0
-        if charData.attribute.style.contains(.underline) {
+        if isUnderline {
             flags |= CellInstance.flagUnderline
         }
         if isBold {
@@ -127,10 +132,10 @@ final class CellGrid {
         if isItalic {
             flags |= CellInstance.flagItalic
         }
-        if charData.attribute.style.contains(.crossedOut) {
+        if isCrossedOut {
             flags |= CellInstance.flagStrikethrough
         }
-        if charData.attribute.style.contains(.inverse) {
+        if isInverse {
             flags |= CellInstance.flagInverse
         }
         if charData.width == 2 {
@@ -163,13 +168,15 @@ final class CellGrid {
         var fgColor = resolveColor(attribute.fg, isBackground: false)
         var bgColor = resolveColor(attribute.bg, isBackground: true)
 
+        let styleRaw = attribute.style.rawValue
+
         // Handle inverse
-        if attribute.style.contains(.inverse) {
+        if (styleRaw & CharacterStyle.inverse.rawValue) != 0 {
             swap(&fgColor, &bgColor)
         }
 
         // Handle dim
-        if attribute.style.contains(.dim) {
+        if (styleRaw & CharacterStyle.dim.rawValue) != 0 {
             fgColor = simd_float4(fgColor.x * 0.5, fgColor.y * 0.5, fgColor.z * 0.5, fgColor.w)
         }
 

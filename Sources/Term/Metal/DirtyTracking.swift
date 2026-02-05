@@ -101,6 +101,10 @@ final class DirtyTracker {
         return isFullyDirty || !dirtyRows.isEmpty || !dirtyRegions.isEmpty
     }
 
+    var isClean: Bool {
+        return !isFullyDirty && dirtyRows.isEmpty && dirtyRegions.isEmpty
+    }
+
     func isRowDirty(_ row: Int) -> Bool {
         if isFullyDirty { return true }
         if dirtyRows.contains(row) { return true }
