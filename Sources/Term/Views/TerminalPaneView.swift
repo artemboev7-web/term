@@ -247,7 +247,7 @@ class TerminalPaneView: NSView {
 
         terminalView.startProcess(
             executable: shell,
-            args: [shell, "-l"],
+            args: ["-l"],
             environment: env,
             execName: (shell as NSString).lastPathComponent
         )
