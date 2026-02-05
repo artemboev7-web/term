@@ -70,7 +70,7 @@ vertex VertexOut vertex_background(
     constant Uniforms& uniforms [[buffer(1)]]
 ) {
     // Quad vertices (2 triangles = 6 vertices)
-    constant float2 quadPositions[6] = {
+    float2 quadPositions[6] = {
         float2(0, 0), float2(1, 0), float2(0, 1),  // Triangle 1
         float2(1, 0), float2(1, 1), float2(0, 1)   // Triangle 2
     };
@@ -154,12 +154,12 @@ vertex VertexOut vertex_glyph(
     constant CellInstance* instances [[buffer(0)]],
     constant Uniforms& uniforms [[buffer(1)]]
 ) {
-    constant float2 quadPositions[6] = {
+    float2 quadPositions[6] = {
         float2(0, 0), float2(1, 0), float2(0, 1),
         float2(1, 0), float2(1, 1), float2(0, 1)
     };
 
-    constant float2 quadTexCoords[6] = {
+    float2 quadTexCoords[6] = {
         float2(0, 0), float2(1, 0), float2(0, 1),
         float2(1, 0), float2(1, 1), float2(0, 1)
     };
