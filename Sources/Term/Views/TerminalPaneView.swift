@@ -438,6 +438,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // MARK: - PTYManagerDelegate
 
     func ptyManager(_ manager: PTYManager, didReceiveData data: Data) {
+        logDebug("Received \(data.count) bytes from PTY", context: "TerminalPane")
         terminal.feed(data)
     }
 

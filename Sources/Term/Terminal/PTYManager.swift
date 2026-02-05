@@ -214,7 +214,6 @@ public final class PTYManager {
         proc.executableURL = URL(fileURLWithPath: shell)
 
         // Login shell argument
-        let shellName = (shell as NSString).lastPathComponent
         proc.arguments = ["-l"]  // Login shell
 
         // Set working directory

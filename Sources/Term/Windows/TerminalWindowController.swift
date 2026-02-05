@@ -224,13 +224,13 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
 
     func findNext() {
         if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
-            currentVC.findNext()
+            _ = currentVC.findNext()
         }
     }
 
     func findPrevious() {
         if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
-            currentVC.findPrevious()
+            _ = currentVC.findPrevious()
         }
     }
 
