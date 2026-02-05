@@ -93,23 +93,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func zoomIn() {
         Settings.shared.fontSize += 1
-        notifyFontChange()
+        // fontSize didSet posts notification automatically
     }
 
     @objc func zoomOut() {
         if Settings.shared.fontSize > 8 {
             Settings.shared.fontSize -= 1
-            notifyFontChange()
         }
     }
 
     @objc func resetZoom() {
         Settings.shared.fontSize = 14
-        notifyFontChange()
-    }
-
-    private func notifyFontChange() {
-        NotificationCenter.default.post(name: .fontSizeChanged, object: nil)
     }
 
     // MARK: - App Menu
@@ -138,9 +132,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - Notifications
-
-extension Notification.Name {
-    static let fontSizeChanged = Notification.Name("fontSizeChanged")
-    static let themeChanged = Notification.Name("themeChanged")
-}
+// Note: Notification.Name extensions are in Settings.swift
