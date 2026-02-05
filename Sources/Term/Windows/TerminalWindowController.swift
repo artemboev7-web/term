@@ -22,6 +22,11 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         setupTabViewController()
         addNewTab()
         logInfo("Window \(windowId) ready", context: "Window")
+
+        // Deferred focus — ensure view hierarchy is fully established
+        DispatchQueue.main.async { [weak self] in
+            self?.focusActiveTerminal()
+        }
     }
 
     private func setupWindow() {
@@ -245,7 +250,10 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         logDebug("Window \(windowId) became key", context: "Window")
-        // Focus terminal when window becomes key
+        focusActiveTerminal()
+    }
+
+    private func focusActiveTerminal() {
         if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
             currentVC.focusTerminal()
         }

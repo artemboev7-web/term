@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = TerminalWindowController()
         windows.append(controller)
         controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
         logInfo("Window created, total windows: \(windows.count)", context: "AppDelegate")
         return controller
     }

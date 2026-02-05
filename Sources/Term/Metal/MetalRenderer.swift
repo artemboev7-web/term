@@ -267,10 +267,10 @@ final class MetalRenderer {
         // Update time for animations
         uniforms.time += 1.0 / 60.0  // Assuming 60fps
 
-        // Update viewport size
+        // Use bounds (points) not drawableSize (pixels) — cellSize is in points
         uniforms.viewportSize = simd_float2(
-            Float(view.drawableSize.width),
-            Float(view.drawableSize.height)
+            Float(view.bounds.width),
+            Float(view.bounds.height)
         )
 
         // Update uniforms buffer
@@ -333,10 +333,10 @@ final class MetalRenderer {
         // Update time for animations
         uniforms.time += 1.0 / 60.0
 
-        // Update viewport size
+        // Use bounds (points) not drawableSize (pixels) — cellSize is in points
         uniforms.viewportSize = simd_float2(
-            Float(view.drawableSize.width),
-            Float(view.drawableSize.height)
+            Float(view.bounds.width),
+            Float(view.bounds.height)
         )
 
         // Update uniforms buffer
