@@ -624,14 +624,15 @@ public final class TerminalEmulator: TerminalParserDelegate {
 
         case 4: // Change color palette
             // Format: 4;index;spec
-            // Ignore for now
+            break
 
         case 10, 11, 12: // Foreground/background/cursor color
-            // Ignore for now
+            break
 
         case 52: // Clipboard
             // Format: 52;c;base64data
-            // Security-sensitive, ignore
+            // Security-sensitive
+            break
 
         case 104: // Reset color
             break

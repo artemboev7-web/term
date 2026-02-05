@@ -34,7 +34,7 @@ class TerminalViewController: NSViewController {
 
         // Создаём первую панель
         logDebug("Creating first terminal pane", context: "TerminalVC")
-        addTerminalPane()
+        _ = addTerminalPane()
         logInfo("TerminalViewController \(vcId) loaded with 1 pane", context: "TerminalVC")
 
         // Подписка на изменение настроек

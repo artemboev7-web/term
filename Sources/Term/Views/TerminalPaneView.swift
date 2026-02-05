@@ -33,6 +33,9 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     private var currentMatchIndex: Int = 0
     private var currentSearchQuery: String = ""
 
+    // Cell size for font calculations
+    private var cellSize: NSSize = NSSize(width: 8, height: 16)
+
     // URL pattern for detection
     private static let urlPattern = try? NSRegularExpression(
         pattern: "https?://[^\\s\\)\\]\\>\"']+",
@@ -448,10 +451,10 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
 
     // MARK: - Search
 
-    func search(_ query: String, backwards: Bool = false) -> Bool {
+    func search(for query: String, backwards: Bool = false) -> (count: Int, current: Int) {
         guard !query.isEmpty else {
             clearSearch()
-            return false
+            return (0, 0)
         }
 
         currentSearchQuery = query
@@ -476,26 +479,26 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         }
 
         if searchMatches.isEmpty {
-            return false
+            return (0, 0)
         }
 
         currentMatchIndex = backwards ? searchMatches.count - 1 : 0
         highlightCurrentMatch()
-        return true
+        return (searchMatches.count, currentMatchIndex + 1)
     }
 
-    func findNext() -> Bool {
-        guard !searchMatches.isEmpty else { return false }
+    func findNext() -> (count: Int, current: Int) {
+        guard !searchMatches.isEmpty else { return (0, 0) }
         currentMatchIndex = (currentMatchIndex + 1) % searchMatches.count
         highlightCurrentMatch()
-        return true
+        return (searchMatches.count, currentMatchIndex + 1)
     }
 
-    func findPrevious() -> Bool {
-        guard !searchMatches.isEmpty else { return false }
+    func findPrevious() -> (count: Int, current: Int) {
+        guard !searchMatches.isEmpty else { return (0, 0) }
         currentMatchIndex = (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
         highlightCurrentMatch()
-        return true
+        return (searchMatches.count, currentMatchIndex + 1)
     }
 
     func clearSearch() {
@@ -514,5 +517,47 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
             start: (row: match.row, col: match.column),
             end: (row: match.row, col: match.column + match.length - 1)
         )
+    }
+
+    // MARK: - Buffer Operations
+
+    func clear() {
+        terminal.reset()
+        metalView?.setNeedsDisplay(bounds)
+    }
+
+    // MARK: - Settings Updates
+
+    func updateFont() {
+        // Recalculate cell size based on new font
+        let font = NSFont.monospacedSystemFont(
+            ofSize: CGFloat(Settings.shared.fontSize),
+            weight: .regular
+        )
+        cellSize = calculateCellSize(for: font)
+
+        // Recalculate terminal size
+        let cols = max(1, Int(bounds.width / cellSize.width))
+        let rows = max(1, Int(bounds.height / cellSize.height))
+
+        terminal.resize(cols: cols, rows: rows)
+        ptyManager?.resize(cols: cols, rows: rows)
+
+        // Update Metal view
+        metalView?.frame = bounds
+        metalView?.setNeedsDisplay(bounds)
+    }
+
+    func updateTheme() {
+        // Update background color
+        layer?.backgroundColor = Settings.shared.theme.background.cgColor
+        metalView?.setNeedsDisplay(bounds)
+    }
+
+    private func calculateCellSize(for font: NSFont) -> NSSize {
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let sampleChar = NSAttributedString(string: "M", attributes: attributes)
+        let size = sampleChar.size()
+        return NSSize(width: ceil(size.width), height: ceil(size.height))
     }
 }
