@@ -6,13 +6,9 @@ let package = Package(
     platforms: [
         .macOS(.v13)
     ],
-    dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0")
-    ],
     targets: [
         .executableTarget(
             name: "Term",
-            dependencies: ["SwiftTerm"],
             path: "Sources/Term",
             sources: [
                 "App/TermApp.swift",
@@ -24,7 +20,14 @@ let package = Package(
                 "Views/SearchBarView.swift",
                 "Settings/Settings.swift",
                 "Utils/Logger.swift",
-                // Metal renderer (Shaders.metal загружается runtime)
+                // Terminal emulator (custom, no dependencies)
+                "Terminal/TerminalCell.swift",
+                "Terminal/TerminalBuffer.swift",
+                "Terminal/TerminalParser.swift",
+                "Terminal/TerminalEmulator.swift",
+                "Terminal/PTYManager.swift",
+                "Terminal/InputHandler.swift",
+                // Metal renderer
                 "Metal/ShaderTypes.swift",
                 "Metal/MetalRenderer.swift",
                 "Metal/GlyphAtlas.swift",

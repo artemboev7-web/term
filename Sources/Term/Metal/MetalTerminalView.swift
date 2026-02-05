@@ -1,17 +1,19 @@
 import MetalKit
-import SwiftTerm
 import AppKit
 import QuartzCore
 
-/// Metal-accelerated terminal view that renders SwiftTerm buffer
+/// Metal-accelerated terminal view that renders our terminal buffer
 final class MetalTerminalView: MTKView {
     // MARK: - Properties
 
     private var renderer: MetalRenderer?
     private var cellGrid: CellGrid?
 
-    // Reference to SwiftTerm terminal (weak to avoid retain cycle)
-    weak var terminalView: LocalProcessTerminalView?
+    // Reference to terminal emulator
+    weak var terminal: TerminalEmulator?
+
+    // Selection manager
+    let selectionManager = SelectionManager()
 
     // Dirty tracking
     private var dirtyTracker: DirtyTracker?
@@ -38,7 +40,7 @@ final class MetalTerminalView: MTKView {
 
     // MARK: - Initialization
 
-    init?(frame: NSRect, terminalView: LocalProcessTerminalView) {
+    init?(frame: NSRect, terminal: TerminalEmulator) {
         // Create renderer first
         guard let renderer = MetalRenderer() else {
             logError("Failed to create MetalRenderer", context: "MetalTerminalView")
@@ -46,8 +48,9 @@ final class MetalTerminalView: MTKView {
         }
 
         self.renderer = renderer
-        self.terminalView = terminalView
+        self.terminal = terminal
         self.cellGrid = CellGrid(glyphAtlas: renderer.glyphAtlas)
+        self.cellGrid?.selectionManager = selectionManager
 
         super.init(frame: frame, device: renderer.device)
 
@@ -72,7 +75,7 @@ final class MetalTerminalView: MTKView {
         layer?.isOpaque = true
 
         // Initialize dirty tracker
-        if let terminal = terminalView?.getTerminal() {
+        if let terminal = terminal {
             dirtyTracker = DirtyTracker(rows: terminal.rows, cols: terminal.cols)
         }
 
@@ -262,12 +265,12 @@ final class MetalTerminalView: MTKView {
     }
 
     func setSelection(start: (row: Int, col: Int)?, end: (row: Int, col: Int)?) {
-        cellGrid?.selectionStart = start
-        cellGrid?.selectionEnd = end
-
         if let s = start, let e = end {
+            selectionManager.start = s
+            selectionManager.end = e
             renderer?.setSelection(startRow: s.row, startCol: s.col, endRow: e.row, endCol: e.col)
         } else {
+            selectionManager.clearSelection()
             renderer?.clearSelection()
         }
         needsFullRedraw = true
@@ -278,7 +281,7 @@ final class MetalTerminalView: MTKView {
     private func renderFrame() {
         guard let renderer = renderer,
               let cellGrid = cellGrid,
-              let terminalView = terminalView,
+              let terminal = terminal,
               let drawable = currentDrawable else {
             return
         }
@@ -287,13 +290,11 @@ final class MetalTerminalView: MTKView {
         updateFPSCounter()
 
         // Get terminal state
-        let terminal = terminalView.getTerminal()
         let rows = terminal.rows
         let cols = terminal.cols
 
         // Skip if nothing changed
         if let tracker = dirtyTracker, tracker.isClean && !needsFullRedraw {
-            // Nothing to render
             return
         }
 
@@ -301,12 +302,9 @@ final class MetalTerminalView: MTKView {
         renderer.setGridSize(cols: cols, rows: rows)
 
         // Sync cursor position
-        let cursorCol = terminal.buffer.x
-        let cursorRow = terminal.buffer.y
-        setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
-
-        // Sync selection from SwiftTerm
-        syncSelection()
+        let cursorCol = terminal.cursorX
+        let cursorRow = terminal.cursorY
+        setCursor(row: cursorRow, col: cursorCol, visible: terminal.cursorVisible)
 
         // Build cell instances
         let instances = cellGrid.buildInstances(from: terminal, rows: rows, cols: cols)
@@ -419,7 +417,7 @@ final class MetalTerminalView: MTKView {
         super.layout()
 
         // Update dirty tracker for new size
-        if let terminal = terminalView?.getTerminal() {
+        if let terminal = terminal {
             dirtyTracker = DirtyTracker(rows: terminal.rows, cols: terminal.cols)
         }
 
@@ -462,49 +460,24 @@ final class MetalTerminalView: MTKView {
             displayLinkRunning = true
         }
     }
+
+    /// Get selected text
+    func getSelectedText() -> String {
+        guard let terminal = terminal else { return "" }
+        return selectionManager.getSelectedText(from: terminal)
+    }
 }
 
-// MARK: - Event Forwarding
+// MARK: - Event Handling
 
 extension MetalTerminalView {
-    // Forward mouse events to SwiftTerm for proper handling
-    // Metal view is overlay, so it intercepts events
+    override var acceptsFirstResponder: Bool { true }
 
-    override func mouseDown(with event: NSEvent) {
-        terminalView?.mouseDown(with: event)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        terminalView?.mouseUp(with: event)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        terminalView?.mouseDragged(with: event)
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        terminalView?.mouseMoved(with: event)
-    }
-
-    override func scrollWheel(with event: NSEvent) {
-        terminalView?.scrollWheel(with: event)
-        markAllDirty()  // Scrolling changes visible content
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        terminalView?.rightMouseDown(with: event)
-    }
-
-    override func rightMouseUp(with event: NSEvent) {
-        terminalView?.rightMouseUp(with: event)
-    }
-
-    // Forward keyboard to SwiftTerm (it's first responder anyway)
-    override var acceptsFirstResponder: Bool { false }
+    // Mouse handling is done in parent view (TerminalPaneView)
+    // This view just renders, input is handled at a higher level
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Pass through to SwiftTerm for proper event handling
-        // but still receive mouse events
+        // Pass through to parent for proper event handling
         return super.hitTest(point)
     }
 }
@@ -512,28 +485,12 @@ extension MetalTerminalView {
 // MARK: - Sync Helper
 
 extension MetalTerminalView {
-    /// Sync selection state from SwiftTerm view
-    /// Note: Selection is handled by SwiftTerm's native rendering.
-    /// Mouse events are forwarded, so SwiftTerm manages selection state.
-    private func syncSelection() {
-        // Selection sync disabled - SwiftTerm handles selection internally
-        // and we forward mouse events to it. The Metal view renders
-        // on top, so selection appears via the underlying SwiftTerm view.
-    }
-
-    /// Synchronize state from SwiftTerm view
+    /// Synchronize state from terminal
     func syncFromTerminal() {
-        guard let terminalView = terminalView else { return }
-
-        let terminal = terminalView.getTerminal()
+        guard let terminal = terminal else { return }
 
         // Sync cursor position
-        let cursorCol = terminal.buffer.x
-        let cursorRow = terminal.buffer.y
-        setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
-
-        // Sync selection
-        syncSelection()
+        setCursor(row: terminal.cursorY, col: terminal.cursorX, visible: cursorVisible)
 
         // Trigger redraw
         markAllDirty()

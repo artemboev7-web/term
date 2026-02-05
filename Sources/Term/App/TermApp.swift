@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 
 @main
 struct TermApp {

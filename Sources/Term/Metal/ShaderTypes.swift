@@ -105,7 +105,7 @@ extension simd_float4 {
         )
     }
 
-    /// Create from 16-bit color (SwiftTerm uses 16-bit)
+    /// Create from 16-bit color components
     init(r16: UInt16, g16: UInt16, b16: UInt16) {
         self.init(
             Float(r16) / 65535.0,

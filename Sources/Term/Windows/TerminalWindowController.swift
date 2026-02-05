@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 
 class TerminalWindowController: NSWindowController, NSWindowDelegate {
     private var tabViewController: NSTabViewController!

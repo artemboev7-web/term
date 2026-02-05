@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var windows: [TerminalWindowController] = []
@@ -152,7 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         logDebug("Menu: About", context: "AppDelegate")
         let alert = NSAlert()
         alert.messageText = "Term"
-        alert.informativeText = "A minimal terminal emulator for macOS\n\nBuilt with SwiftTerm\n\nLogs: ~/Library/Logs/Term/"
+        alert.informativeText = "A minimal terminal emulator for macOS\n\nMetal GPU-accelerated rendering\n\nLogs: ~/Library/Logs/Term/"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()

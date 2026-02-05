@@ -1,8 +1,7 @@
 import simd
-import SwiftTerm
 import AppKit
 
-/// Builds cell instances from SwiftTerm buffer for Metal rendering
+/// Builds cell instances from terminal buffer for Metal rendering
 final class CellGrid {
     // MARK: - Properties
 
@@ -20,9 +19,8 @@ final class CellGrid {
     var cursorCol: Int = 0
     var cursorVisible: Bool = true
 
-    // Selection state
-    var selectionStart: (row: Int, col: Int)?
-    var selectionEnd: (row: Int, col: Int)?
+    // Selection manager reference
+    var selectionManager: SelectionManager?
 
     // ANSI color palette (16 basic colors)
     private var palette: [simd_float4] = []
@@ -79,7 +77,7 @@ final class CellGrid {
 
     // MARK: - Building Instances
 
-    func buildInstances(from terminal: Terminal, rows: Int, cols: Int) -> [CellInstance] {
+    func buildInstances(from terminal: TerminalEmulator, rows: Int, cols: Int) -> [CellInstance] {
         instances.removeAll(keepingCapacity: true)
         instances.reserveCapacity(rows * cols)
 
@@ -88,12 +86,12 @@ final class CellGrid {
 
             var col = 0
             while col < cols {
-                let charData = line[col]
-                let instance = buildCellInstance(charData: charData, row: row, col: col)
+                let cell = line[col]
+                let instance = buildCellInstance(cell: cell, row: row, col: col)
                 instances.append(instance)
 
                 // Skip next cell for double-width characters
-                if charData.width == 2 {
+                if cell.width == 2 {
                     col += 2
                 } else {
                     col += 1
@@ -104,26 +102,20 @@ final class CellGrid {
         return instances
     }
 
-    private func buildCellInstance(charData: CharData, row: Int, col: Int) -> CellInstance {
-        // Get codepoint from Character (code property is internal)
-        let char = charData.getCharacter()
-        let codepoint: UInt32
-        if let scalar = char.unicodeScalars.first {
-            codepoint = scalar.value
-        } else {
-            codepoint = 0x20  // space
-        }
+    private func buildCellInstance(cell: TerminalCell, row: Int, col: Int) -> CellInstance {
+        // Get codepoint
+        let codepoint = cell.codepoint
 
         // Determine colors from attribute
-        let (fgColor, bgColor) = resolveColors(attribute: charData.attribute)
+        let (fgColor, bgColor) = resolveColors(attribute: cell.attribute)
 
-        // Check style flags using rawValue (CharacterStyle is OptionSet)
-        let styleRaw = charData.attribute.style.rawValue
-        let isBold = (styleRaw & CharacterStyle.bold.rawValue) != 0
-        let isItalic = (styleRaw & CharacterStyle.italic.rawValue) != 0
-        let isUnderline = (styleRaw & CharacterStyle.underline.rawValue) != 0
-        let isCrossedOut = (styleRaw & CharacterStyle.crossedOut.rawValue) != 0
-        let isInverse = (styleRaw & CharacterStyle.inverse.rawValue) != 0
+        // Check style flags
+        let style = cell.attribute.style
+        let isBold = style.contains(.bold)
+        let isItalic = style.contains(.italic)
+        let isUnderline = style.contains(.underline)
+        let isStrikethrough = style.contains(.strikethrough)
+        let isInverse = style.contains(.inverse)
 
         let glyphInfo = glyphAtlas.getGlyph(codepoint: codepoint, bold: isBold, italic: isItalic)
 
@@ -138,13 +130,13 @@ final class CellGrid {
         if isItalic {
             flags |= CellInstance.flagItalic
         }
-        if isCrossedOut {
+        if isStrikethrough {
             flags |= CellInstance.flagStrikethrough
         }
         if isInverse {
             flags |= CellInstance.flagInverse
         }
-        if charData.width == 2 {
+        if cell.width == 2 {
             flags |= CellInstance.flagDoubleWidth
         }
 
@@ -154,7 +146,7 @@ final class CellGrid {
         }
 
         // Check if selected
-        if isSelected(row: row, col: col) {
+        if let selection = selectionManager, selection.isSelected(row: row, col: col) {
             flags |= CellInstance.flagSelected
         }
 
@@ -170,86 +162,29 @@ final class CellGrid {
 
     // MARK: - Color Resolution
 
-    private func resolveColors(attribute: Attribute) -> (fg: simd_float4, bg: simd_float4) {
+    private func resolveColors(attribute: CellAttribute) -> (fg: simd_float4, bg: simd_float4) {
         var fgColor = resolveColor(attribute.fg, isBackground: false)
         var bgColor = resolveColor(attribute.bg, isBackground: true)
 
-        let styleRaw = attribute.style.rawValue
-
         // Handle inverse
-        if (styleRaw & CharacterStyle.inverse.rawValue) != 0 {
+        if attribute.style.contains(.inverse) {
             swap(&fgColor, &bgColor)
         }
 
         // Handle dim
-        if (styleRaw & CharacterStyle.dim.rawValue) != 0 {
+        if attribute.style.contains(.dim) {
             fgColor = simd_float4(fgColor.x * 0.5, fgColor.y * 0.5, fgColor.z * 0.5, fgColor.w)
         }
 
         return (fgColor, bgColor)
     }
 
-    private func resolveColor(_ color: Attribute.Color, isBackground: Bool) -> simd_float4 {
-        switch color {
-        case .defaultColor:
-            return isBackground ? defaultBgColor : defaultFgColor
-
-        case .defaultInvertedColor:
-            return isBackground ? defaultFgColor : defaultBgColor
-
-        case .ansi256(let code):
-            return ansi256ToColor(Int(code))
-
-        case .trueColor(let r, let g, let b):
-            return simd_float4(r: UInt8(r), g: UInt8(g), b: UInt8(b))
-        }
-    }
-
-    private func ansi256ToColor(_ code: Int) -> simd_float4 {
-        if code < 16 {
-            // Standard ANSI colors
-            return palette[code]
-        } else if code < 232 {
-            // 216-color cube (6x6x6)
-            let index = code - 16
-            let r = (index / 36) % 6
-            let g = (index / 6) % 6
-            let b = index % 6
-
-            let toFloat: (Int) -> Float = { $0 == 0 ? 0 : Float($0 * 40 + 55) / 255.0 }
-            return simd_float4(toFloat(r), toFloat(g), toFloat(b), 1.0)
-        } else {
-            // 24-level grayscale
-            let gray = Float((code - 232) * 10 + 8) / 255.0
-            return simd_float4(gray, gray, gray, 1.0)
-        }
-    }
-
-    // MARK: - Selection
-
-    private func isSelected(row: Int, col: Int) -> Bool {
-        guard let start = selectionStart, let end = selectionEnd else {
-            return false
-        }
-
-        // Normalize selection direction
-        let (startRow, startCol, endRow, endCol): (Int, Int, Int, Int)
-        if start.row < end.row || (start.row == end.row && start.col <= end.col) {
-            (startRow, startCol, endRow, endCol) = (start.row, start.col, end.row, end.col)
-        } else {
-            (startRow, startCol, endRow, endCol) = (end.row, end.col, start.row, start.col)
-        }
-
-        // Check if cell is within selection
-        if row < startRow || row > endRow {
-            return false
-        }
-        if row == startRow && col < startCol {
-            return false
-        }
-        if row == endRow && col > endCol {
-            return false
-        }
-        return true
+    private func resolveColor(_ color: TerminalColor, isBackground: Bool) -> simd_float4 {
+        return color.toFloat4(
+            palette: palette,
+            isBackground: isBackground,
+            defaultFg: defaultFgColor,
+            defaultBg: defaultBgColor
+        )
     }
 }

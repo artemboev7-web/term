@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 
 protocol TerminalPaneViewDelegate: AnyObject {
     func paneDidBecomeActive(_ pane: TerminalPaneView)
@@ -14,13 +13,18 @@ struct SearchMatch {
     let length: Int
 }
 
-class TerminalPaneView: NSView {
+class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     weak var delegate: TerminalPaneViewDelegate?
 
-    private var terminalView: LocalProcessTerminalView!
+    // Our custom terminal emulator
+    private var terminal: TerminalEmulator!
+    private var ptyManager: PTYManager!
+    private var inputHandler: InputHandler!
+
+    // Metal rendering
+    private var metalView: MetalTerminalView?
     private var vibrancyView: NSVisualEffectView?
-    private var metalView: MetalTerminalView?  // GPU-accelerated rendering
-    private var useMetalRenderer: Bool = true  // Toggle for Metal vs SwiftTerm rendering
+
     private var isActive = false
     private let paneId = UUID().uuidString.prefix(8)
 
@@ -35,6 +39,8 @@ class TerminalPaneView: NSView {
         options: [.caseInsensitive]
     )
 
+    // MARK: - Initialization
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
@@ -48,542 +54,465 @@ class TerminalPaneView: NSView {
     private func setup() {
         logInfo("Setting up terminal pane \(paneId)", context: "TerminalPane")
 
-        // Load Metal renderer setting
-        useMetalRenderer = Settings.shared.useMetalRenderer
-
         wantsLayer = true
 
         // Setup vibrancy if enabled
         setupVibrancy()
 
-        // Background color (visible when vibrancy is off)
+        // Background color
         layer?.backgroundColor = Settings.shared.theme.background.cgColor
 
-        // Subtle inner shadow / border effect
+        // Border
         layer?.borderWidth = 0.5
         layer?.borderColor = Settings.shared.theme.border.cgColor
 
-        // Создаём терминал
-        logDebug("Creating LocalProcessTerminalView", context: "TerminalPane")
-        terminalView = LocalProcessTerminalView(frame: bounds)
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        // Create terminal emulator with default size (will resize later)
+        let cols = 80
+        let rows = 24
+        terminal = TerminalEmulator(cols: cols, rows: rows)
+        terminal.delegate = self
 
-        // Увеличиваем scrollback buffer до 10000 строк (по умолчанию 500)
-        terminalView.getTerminal().options.scrollback = 10000
-        logDebug("Scrollback buffer set to 10000 lines", context: "TerminalPane")
+        // Create PTY manager
+        let shell = Settings.shared.shell
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        ptyManager = PTYManager(shell: shell, workingDirectory: homeDir)
+        ptyManager.delegate = self
 
-        addSubview(terminalView)
+        // Create input handler
+        inputHandler = InputHandler()
+        inputHandler.ptyManager = ptyManager
 
-        // Constraints with small padding
-        let padding: CGFloat = 8
-        NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: padding),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding)
-        ])
+        // Setup Metal view
+        setupMetalView()
 
-        // Настройка
+        // Apply settings
         applySettings()
 
-        // Запуск shell
+        // Start shell
         startShell()
 
-        // Обработка завершения процесса
-        terminalView.processDelegate = self
+        // Subscribe to notifications
+        setupNotifications()
 
-        // Setup Metal renderer overlay
-        setupMetalRenderer()
+        logInfo("Terminal pane \(paneId) setup complete", context: "TerminalPane")
+    }
 
-        // Subscribe to vibrancy changes
+    deinit {
+        ptyManager.stop()
+        metalView?.pauseRendering()
+        NotificationCenter.default.removeObserver(self)
+        logDebug("Terminal pane \(paneId) deallocated", context: "TerminalPane")
+    }
+
+    // MARK: - Setup
+
+    private func setupVibrancy() {
+        if Settings.shared.vibrancyEnabled {
+            logDebug("Vibrancy enabled", context: "TerminalPane")
+            let vibrancy = NSVisualEffectView(frame: bounds)
+            vibrancy.blendingMode = .behindWindow
+            vibrancy.material = .sidebar
+            vibrancy.state = .active
+            vibrancy.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(vibrancy)
+            NSLayoutConstraint.activate([
+                vibrancy.topAnchor.constraint(equalTo: topAnchor),
+                vibrancy.bottomAnchor.constraint(equalTo: bottomAnchor),
+                vibrancy.leadingAnchor.constraint(equalTo: leadingAnchor),
+                vibrancy.trailingAnchor.constraint(equalTo: trailingAnchor)
+            ])
+            vibrancyView = vibrancy
+        } else {
+            logDebug("Vibrancy disabled", context: "TerminalPane")
+        }
+    }
+
+    private func setupMetalView() {
+        guard let metalView = MetalTerminalView(frame: bounds, terminal: terminal) else {
+            logError("Failed to create MetalTerminalView", context: "TerminalPane")
+            return
+        }
+
+        metalView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(metalView)
+
+        let padding: CGFloat = 8
+        NSLayoutConstraint.activate([
+            metalView.topAnchor.constraint(equalTo: topAnchor, constant: padding),
+            metalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
+            metalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            metalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding)
+        ])
+
+        self.metalView = metalView
+        logInfo("Metal renderer initialized for pane \(paneId)", context: "TerminalPane")
+    }
+
+    private func setupNotifications() {
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleVibrancyChange),
+            selector: #selector(vibrancyChanged),
             name: .vibrancyChanged,
             object: nil
         )
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleFontChange),
-            name: .fontSizeChanged,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleFontChange),
-            name: .fontChanged,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleThemeChange),
+            selector: #selector(themeChanged),
             name: .themeChanged,
             object: nil
         )
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleMetalRendererChange),
-            name: .metalRendererChanged,
+            selector: #selector(fontChanged),
+            name: .fontChanged,
             object: nil
         )
 
-        logInfo("Terminal pane \(paneId) setup complete", context: "TerminalPane")
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(fontSizeChanged),
+            name: .fontSizeChanged,
+            object: nil
+        )
     }
 
-    deinit {
-        logInfo("Terminal pane \(paneId) deallocated", context: "TerminalPane")
-        NotificationCenter.default.removeObserver(self)
-    }
+    // MARK: - Shell
 
-    // MARK: - Vibrancy
+    private func startShell() {
+        let shell = Settings.shared.shell
+        logInfo("Starting shell: \(shell)", context: "TerminalPane")
 
-    private func setupVibrancy() {
-        // Remove existing vibrancy view if any
-        vibrancyView?.removeFromSuperview()
-        vibrancyView = nil
-
-        guard Settings.shared.vibrancy else {
-            logDebug("Vibrancy disabled", context: "TerminalPane")
-            layer?.backgroundColor = Settings.shared.theme.background.cgColor
-            return
-        }
-
-        logDebug("Setting up vibrancy effect", context: "TerminalPane")
-
-        // Create vibrancy view
-        let visualEffect = NSVisualEffectView(frame: bounds)
-        visualEffect.translatesAutoresizingMaskIntoConstraints = false
-        visualEffect.blendingMode = .behindWindow
-        visualEffect.material = .hudWindow
-        visualEffect.state = .active
-        visualEffect.wantsLayer = true
-
-        // Add as background
-        addSubview(visualEffect, positioned: .below, relativeTo: terminalView)
-
-        NSLayoutConstraint.activate([
-            visualEffect.topAnchor.constraint(equalTo: topAnchor),
-            visualEffect.bottomAnchor.constraint(equalTo: bottomAnchor),
-            visualEffect.leadingAnchor.constraint(equalTo: leadingAnchor),
-            visualEffect.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
-
-        vibrancyView = visualEffect
-
-        // Make terminal background semi-transparent
-        layer?.backgroundColor = Settings.shared.theme.background.withAlphaComponent(0.7).cgColor
-    }
-
-    // MARK: - Metal Renderer
-
-    private func setupMetalRenderer() {
-        guard useMetalRenderer else {
-            logDebug("Metal renderer disabled", context: "TerminalPane")
-            return
-        }
-
-        // Try to create Metal view
-        guard let metal = MetalTerminalView(frame: terminalView.bounds, terminalView: terminalView) else {
-            logWarning("Failed to create MetalTerminalView, falling back to SwiftTerm rendering", context: "TerminalPane")
-            useMetalRenderer = false
-            return
-        }
-
-        metal.translatesAutoresizingMaskIntoConstraints = false
-        metal.applyTheme(Settings.shared.theme)
-
-        // Add Metal view as overlay on top of SwiftTerm
-        addSubview(metal, positioned: .above, relativeTo: terminalView)
-
-        NSLayoutConstraint.activate([
-            metal.topAnchor.constraint(equalTo: terminalView.topAnchor),
-            metal.bottomAnchor.constraint(equalTo: terminalView.bottomAnchor),
-            metal.leadingAnchor.constraint(equalTo: terminalView.leadingAnchor),
-            metal.trailingAnchor.constraint(equalTo: terminalView.trailingAnchor)
-        ])
-
-        metalView = metal
-
-        // Hide SwiftTerm's native rendering (it still handles input and buffer)
-        terminalView.alphaValue = 0
-
-        // MetalTerminalView manages its own CVDisplayLink for vsync
-        logInfo("Metal renderer initialized for pane \(paneId)", context: "TerminalPane")
-    }
-
-    /// Toggle between Metal and SwiftTerm rendering
-    func setMetalRendererEnabled(_ enabled: Bool) {
-        if enabled && metalView == nil {
-            useMetalRenderer = true
-            setupMetalRenderer()
-        } else if !enabled && metalView != nil {
-            metalView?.pauseRendering()
-            metalView?.removeFromSuperview()
-            metalView = nil
-            terminalView.alphaValue = 1
-            useMetalRenderer = false
-            logInfo("Switched to SwiftTerm rendering for pane \(paneId)", context: "TerminalPane")
-        }
-    }
-
-    /// Check if Metal rendering is active
-    var isMetalRendererActive: Bool {
-        metalView != nil
-    }
-
-    @objc private func handleVibrancyChange() {
-        logDebug("Vibrancy setting changed", context: "TerminalPane")
-        setupVibrancy()
-        updateTheme()
-    }
-
-    @objc private func handleMetalRendererChange() {
-        logDebug("Metal renderer setting changed: \(Settings.shared.useMetalRenderer)", context: "TerminalPane")
-        setMetalRendererEnabled(Settings.shared.useMetalRenderer)
-    }
-
-    @objc private func handleFontChange() {
-        logDebug("Font changed: \(Settings.shared.fontFamily) \(Settings.shared.fontSize)pt", context: "TerminalPane")
-        applyFont()
-    }
-
-    @objc private func handleThemeChange() {
-        logDebug("Theme changed: \(Settings.shared.theme.name)", context: "TerminalPane")
-        updateTheme()
-    }
-
-    private func applySettings() {
-        let settings = Settings.shared
-        let theme = settings.theme
-
-        logDebug("Applying settings: theme=\(theme.name), vibrancy=\(settings.vibrancy)", context: "TerminalPane")
-
-        // Font
-        applyFont()
-
-        // v0 style colors
-        if settings.vibrancy {
-            terminalView.nativeBackgroundColor = theme.background.withAlphaComponent(0.6)
+        if ptyManager.start() {
+            ptyManager.resize(cols: terminal.cols, rows: terminal.rows)
+            logInfo("Shell process started", context: "TerminalPane")
         } else {
-            terminalView.nativeBackgroundColor = theme.background
+            logError("Failed to start shell", context: "TerminalPane")
         }
-        terminalView.nativeForegroundColor = theme.foreground
-        terminalView.caretColor = theme.cursor
-        terminalView.selectedTextBackgroundColor = theme.selection
+    }
 
-        // Apply ANSI colors
-        applyAnsiColors(theme)
+    // MARK: - Settings
+
+    func applySettings() {
+        logDebug("Applying settings", context: "TerminalPane")
+
+        // Apply theme
+        let theme = Settings.shared.theme
+        layer?.backgroundColor = theme.background.cgColor
+        layer?.borderColor = theme.border.cgColor
+        metalView?.applyTheme(theme)
+
+        // Apply font
+        applyFont()
+
+        // Apply cursor settings
+        metalView?.applySettings()
     }
 
     private func applyFont() {
         let settings = Settings.shared
         let size = CGFloat(settings.fontSize)
 
-        var appliedFont: NSFont
-
-        // Try custom font first
-        if let font = NSFont(name: settings.fontFamily, size: size) {
-            logDebug("Using font: \(settings.fontFamily)", context: "TerminalPane")
-            appliedFont = font
-        } else if let font = NSFont(name: "SF Mono", size: size) {
-            logWarning("Font '\(settings.fontFamily)' not found, falling back to SF Mono", context: "TerminalPane")
-            appliedFont = font
+        let font: NSFont
+        if let f = NSFont(name: settings.fontFamily, size: size) {
+            font = f
+        } else if let f = NSFont(name: "SF Mono", size: size) {
+            logWarning("Falling back to SF Mono font", context: "TerminalPane")
+            font = f
         } else {
             logWarning("Falling back to system monospace font", context: "TerminalPane")
-            appliedFont = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         }
 
-        terminalView.font = appliedFont
-
-        // Update Metal view font
-        metalView?.setFont(appliedFont)
+        metalView?.setFont(font)
     }
 
-    private func applyAnsiColors(_ theme: Theme) {
-        let terminal = terminalView.getTerminal()
+    // MARK: - Resize
 
-        let nsColors: [NSColor] = [
-            theme.black, theme.red, theme.green, theme.yellow,
-            theme.blue, theme.magenta, theme.cyan, theme.white,
-            theme.brightBlack, theme.brightRed, theme.brightGreen, theme.brightYellow,
-            theme.brightBlue, theme.brightMagenta, theme.brightCyan, theme.brightWhite
-        ]
-
-        var colors: [Color] = []
-        for nsColor in nsColors {
-            if let rgb = nsColor.usingColorSpace(.deviceRGB) {
-                let color = Color(
-                    red: UInt16(rgb.redComponent * 65535),
-                    green: UInt16(rgb.greenComponent * 65535),
-                    blue: UInt16(rgb.blueComponent * 65535)
-                )
-                colors.append(color)
-            }
-        }
-
-        if colors.count == 16 {
-            terminal.installPalette(colors: colors)
-            logDebug("ANSI palette installed", context: "TerminalPane")
-        } else {
-            logError("Failed to create ANSI palette: got \(colors.count) colors", context: "TerminalPane")
-        }
+    override func layout() {
+        super.layout()
+        updateTerminalSize()
     }
 
-    private func startShell() {
-        let shell = Settings.shared.shell
-        logInfo("Starting shell: \(shell)", context: "TerminalPane")
-
-        let environment = ProcessInfo.processInfo.environment
-
-        var env: [String] = []
-        for (key, value) in environment {
-            env.append("\(key)=\(value)")
-        }
-
-        env.append("TERM=xterm-256color")
-        env.append("COLORTERM=truecolor")
-        env.append("CLICOLOR=1")
-        env.append("CLICOLOR_FORCE=1")
-
-        logDebug("Environment prepared, starting process...", context: "TerminalPane")
-
-        terminalView.startProcess(
-            executable: shell,
-            args: ["-l"],
-            environment: env,
-            execName: (shell as NSString).lastPathComponent
-        )
-
-        logInfo("Shell process started", context: "TerminalPane")
-    }
-
-    // MARK: - Public Methods
-
-    func focus() {
-        logDebug("Pane \(paneId) focused", context: "TerminalPane")
-        isActive = true
-        window?.makeFirstResponder(terminalView)
-        delegate?.paneDidBecomeActive(self)
-
-        layer?.borderColor = Settings.shared.theme.cursor.withAlphaComponent(0.3).cgColor
-    }
-
-    func blur() {
-        logDebug("Pane \(paneId) blurred", context: "TerminalPane")
-        isActive = false
-        layer?.borderColor = Settings.shared.theme.border.cgColor
-    }
-
-    func clear() {
-        logDebug("Clearing buffer", context: "TerminalPane")
-        terminalView.send(txt: "\u{0C}")
-    }
-
-    func updateFont() {
-        applyFont()
-    }
-
-    func updateTheme() {
-        let theme = Settings.shared.theme
-        let settings = Settings.shared
-
-        if settings.vibrancy {
-            layer?.backgroundColor = theme.background.withAlphaComponent(0.7).cgColor
-            terminalView.nativeBackgroundColor = theme.background.withAlphaComponent(0.6)
-        } else {
-            layer?.backgroundColor = theme.background.cgColor
-            terminalView.nativeBackgroundColor = theme.background
-        }
-
-        layer?.borderColor = isActive ? theme.cursor.withAlphaComponent(0.3).cgColor : theme.border.cgColor
-
-        terminalView.nativeForegroundColor = theme.foreground
-        terminalView.caretColor = theme.cursor
-        terminalView.selectedTextBackgroundColor = theme.selection
-
-        applyAnsiColors(theme)
-
-        // Update Metal view theme
-        metalView?.applyTheme(theme)
-    }
-
-    // MARK: - Search
-
-    func search(for query: String) -> (count: Int, current: Int) {
-        currentSearchQuery = query
-
-        guard !query.isEmpty else {
-            searchMatches = []
-            currentMatchIndex = 0
-            return (0, 0)
-        }
-
-        // Search through visible terminal buffer
-        searchMatches = []
-        let terminal = terminalView.getTerminal()
-        let queryLower = query.lowercased()
-
-        // Search visible rows + scrollback (estimate ~1000 lines max)
-        let maxSearchRows = 1000
-        for row in -maxSearchRows..<terminal.rows {
-            if let line = terminal.getLine(row: row) {
-                let lineText = line.translateToString()
-                let lineTextLower = lineText.lowercased()
-
-                var searchStart = lineTextLower.startIndex
-                while let range = lineTextLower.range(of: queryLower, range: searchStart..<lineTextLower.endIndex) {
-                    let col = lineTextLower.distance(from: lineTextLower.startIndex, to: range.lowerBound)
-                    searchMatches.append(SearchMatch(row: row, column: col, length: query.count))
-                    searchStart = range.upperBound
-                }
-            }
-        }
-
-        if searchMatches.isEmpty {
-            currentMatchIndex = 0
-            logDebug("Search '\(query)': no matches", context: "TerminalPane")
-        } else {
-            currentMatchIndex = 0
-            scrollToMatch(searchMatches[currentMatchIndex])
-            logDebug("Search '\(query)': \(searchMatches.count) matches", context: "TerminalPane")
-        }
-
-        return (searchMatches.count, currentMatchIndex)
-    }
-
-    func findNext() -> (count: Int, current: Int) {
-        guard !searchMatches.isEmpty else {
-            return (0, 0)
-        }
-
-        currentMatchIndex = (currentMatchIndex + 1) % searchMatches.count
-        scrollToMatch(searchMatches[currentMatchIndex])
-        return (searchMatches.count, currentMatchIndex)
-    }
-
-    func findPrevious() -> (count: Int, current: Int) {
-        guard !searchMatches.isEmpty else {
-            return (0, 0)
-        }
-
-        currentMatchIndex = (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
-        scrollToMatch(searchMatches[currentMatchIndex])
-        return (searchMatches.count, currentMatchIndex)
-    }
-
-    func clearSearch() {
-        searchMatches = []
-        currentMatchIndex = 0
-        currentSearchQuery = ""
-    }
-
-    private func scrollToMatch(_ match: SearchMatch) {
-        let terminal = terminalView.getTerminal()
-
-        // Use terminal's scroll method if match is in scrollback
-        if match.row < 0 {
-            // Scroll up to show the row (negative rows are scrollback)
-            terminal.scroll(isWrapped: false)
-        }
-        // Force redraw
-        terminalView.setNeedsDisplay(terminalView.bounds)
-    }
-
-    // MARK: - URL Detection
-
-    private func detectURLAtPoint(_ point: NSPoint) -> URL? {
-        let terminal = terminalView.getTerminal()
-        let localPoint = terminalView.convert(point, from: self)
+    private func updateTerminalSize() {
+        guard let metalView = metalView else { return }
 
         // Calculate cell size from font
-        let font = terminalView.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let settings = Settings.shared
+        let size = CGFloat(settings.fontSize)
+        let font = NSFont(name: settings.fontFamily, size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+
         let fontAttributes = [NSAttributedString.Key.font: font]
         let charSize = NSString("W").size(withAttributes: fontAttributes)
 
-        guard charSize.width > 0, charSize.height > 0 else { return nil }
+        let padding: CGFloat = 8
+        let contentWidth = bounds.width - (padding * 2)
+        let contentHeight = bounds.height - (padding * 2)
 
-        let col = Int(localPoint.x / charSize.width)
-        // Y is flipped in macOS coordinates
-        let row = Int((terminalView.frame.height - localPoint.y) / charSize.height)
+        let cols = max(1, Int(contentWidth / charSize.width))
+        let rows = max(1, Int(contentHeight / charSize.height))
 
-        // Clamp to valid range
-        guard col >= 0, col < terminal.cols, row >= 0, row < terminal.rows else {
-            return nil
+        if cols != terminal.cols || rows != terminal.rows {
+            logDebug("Terminal size changed: \(cols)x\(rows)", context: "TerminalPane")
+            terminal.resize(cols: cols, rows: rows)
+            ptyManager.resize(cols: cols, rows: rows)
+            metalView.markAllDirty()
         }
-
-        // Get the line content
-        let line = terminal.getLine(row: row)
-        let lineText = line?.translateToString() ?? ""
-
-        // Find URLs in the line
-        guard let urlPattern = Self.urlPattern else { return nil }
-        let range = NSRange(lineText.startIndex..., in: lineText)
-        let matches = urlPattern.matches(in: lineText, options: [], range: range)
-
-        // Check if click is on a URL
-        for match in matches {
-            guard let urlRange = Range(match.range, in: lineText) else { continue }
-            let startCol = lineText.distance(from: lineText.startIndex, to: urlRange.lowerBound)
-            let endCol = lineText.distance(from: lineText.startIndex, to: urlRange.upperBound)
-
-            if col >= startCol && col < endCol {
-                let urlString = String(lineText[urlRange])
-                return URL(string: urlString)
-            }
-        }
-
-        return nil
     }
 
-    // MARK: - Mouse Events
+    // MARK: - Notifications
+
+    @objc private func vibrancyChanged() {
+        let enabled = Settings.shared.vibrancyEnabled
+
+        if enabled && vibrancyView == nil {
+            setupVibrancy()
+        } else if !enabled, let v = vibrancyView {
+            v.removeFromSuperview()
+            vibrancyView = nil
+        }
+    }
+
+    @objc private func themeChanged() {
+        let theme = Settings.shared.theme
+        layer?.backgroundColor = theme.background.cgColor
+        layer?.borderColor = theme.border.cgColor
+        metalView?.applyTheme(theme)
+    }
+
+    @objc private func fontChanged() {
+        applyFont()
+        updateTerminalSize()
+    }
+
+    @objc private func fontSizeChanged() {
+        applyFont()
+        updateTerminalSize()
+    }
+
+    // MARK: - Focus
+
+    func focus() {
+        window?.makeFirstResponder(self)
+        isActive = true
+        delegate?.paneDidBecomeActive(self)
+        logDebug("Pane \(paneId) focused", context: "TerminalPane")
+    }
+
+    // MARK: - Keyboard Input
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        inputHandler.handleKeyDown(event)
+    }
+
+    // Handle command key shortcuts
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command) else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        switch event.charactersIgnoringModifiers {
+        case "c":
+            if metalView?.selectionManager.isActive == true {
+                copy(self)
+                return true
+            }
+            // Otherwise send Ctrl-C
+            inputHandler.ptyManager?.write(Data([0x03]))
+            return true
+
+        case "v":
+            paste(self)
+            return true
+
+        default:
+            return super.performKeyEquivalent(with: event)
+        }
+    }
+
+    // MARK: - Mouse Input
 
     override func mouseDown(with event: NSEvent) {
-        // Cmd+click = open URL
-        if event.modifierFlags.contains(.command) {
-            let point = convert(event.locationInWindow, from: nil)
-            if let url = detectURLAtPoint(point) {
-                logInfo("Opening URL: \(url)", context: "TerminalPane")
-                NSWorkspace.shared.open(url)
-                return
-            }
-        }
-
-        super.mouseDown(with: event)
         focus()
+
+        let point = convert(event.locationInWindow, from: nil)
+        let (row, col) = cellPosition(at: point)
+
+        // Start selection
+        metalView?.selectionManager.startSelection(row: row, col: col)
+        metalView?.markAllDirty()
     }
 
-    override var acceptsFirstResponder: Bool {
-        return true
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let (row, col) = cellPosition(at: point)
+
+        // Update selection
+        metalView?.selectionManager.updateSelection(row: row, col: col)
+        metalView?.markAllDirty()
     }
-}
 
-// MARK: - LocalProcessTerminalViewDelegate
+    override func mouseUp(with event: NSEvent) {
+        metalView?.selectionManager.endSelection()
+    }
 
-extension TerminalPaneView: LocalProcessTerminalViewDelegate {
-    func processTerminated(source: TerminalView, exitCode: Int32?) {
-        logInfo("Shell process terminated with exit code: \(exitCode ?? -1)", context: "TerminalPane")
+    override func scrollWheel(with event: NSEvent) {
+        // TODO: Handle scrollback
+        metalView?.markAllDirty()
+    }
+
+    private func cellPosition(at point: NSPoint) -> (row: Int, col: Int) {
+        let settings = Settings.shared
+        let size = CGFloat(settings.fontSize)
+        let font = NSFont(name: settings.fontFamily, size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+
+        let fontAttributes = [NSAttributedString.Key.font: font]
+        let charSize = NSString("W").size(withAttributes: fontAttributes)
+
+        let padding: CGFloat = 8
+        let x = point.x - padding
+        let y = bounds.height - point.y - padding  // Flip Y
+
+        let col = max(0, min(Int(x / charSize.width), terminal.cols - 1))
+        let row = max(0, min(Int(y / charSize.height), terminal.rows - 1))
+
+        return (row, col)
+    }
+
+    // MARK: - Copy/Paste
+
+    @objc func copy(_ sender: Any?) {
+        guard let text = metalView?.getSelectedText(), !text.isEmpty else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        // Clear selection after copy
+        metalView?.selectionManager.clearSelection()
+        metalView?.markAllDirty()
+    }
+
+    @objc func paste(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+
+        inputHandler.bracketedPasteMode = terminal.modes.contains(.bracketedPaste)
+        inputHandler.paste(text)
+    }
+
+    // MARK: - TerminalEmulatorDelegate
+
+    func terminal(_ terminal: TerminalEmulator, titleChanged: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.delegate?.pane(self, didUpdateTitle: titleChanged)
+        }
+    }
+
+    func terminalBell(_ terminal: TerminalEmulator) {
+        NSSound.beep()
+    }
+
+    func terminal(_ terminal: TerminalEmulator, send data: Data) {
+        ptyManager.write(data)
+    }
+
+    func terminalDidUpdate(_ terminal: TerminalEmulator) {
+        DispatchQueue.main.async { [weak self] in
+            self?.metalView?.markAllDirty()
+        }
+    }
+
+    func terminal(_ terminal: TerminalEmulator, sizeChanged cols: Int, rows: Int) {
+        // Size change is handled elsewhere
+    }
+
+    // MARK: - PTYManagerDelegate
+
+    func ptyManager(_ manager: PTYManager, didReceiveData data: Data) {
+        terminal.feed(data)
+    }
+
+    func ptyManager(_ manager: PTYManager, processTerminated exitCode: Int32) {
+        logInfo("Shell process terminated with code \(exitCode)", context: "TerminalPane")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.paneDidClose(self)
         }
     }
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        logDebug("Terminal size changed: \(newCols)x\(newRows)", context: "TerminalPane")
-    }
+    // MARK: - Search
 
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        logDebug("Terminal title changed: \(title)", context: "TerminalPane")
-        delegate?.pane(self, didUpdateTitle: title)
-    }
-
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        if let dir = directory {
-            logDebug("Current directory: \(dir)", context: "TerminalPane")
+    func search(_ query: String, backwards: Bool = false) -> Bool {
+        guard !query.isEmpty else {
+            clearSearch()
+            return false
         }
+
+        currentSearchQuery = query
+        searchMatches.removeAll()
+
+        // Search through terminal buffer
+        for row in 0..<terminal.rows {
+            guard let line = terminal.getLine(row: row) else { continue }
+
+            var lineText = ""
+            for col in 0..<line.count {
+                lineText.append(line[col].character)
+            }
+
+            // Find matches in this line
+            var searchRange = lineText.startIndex..<lineText.endIndex
+            while let range = lineText.range(of: query, options: .caseInsensitive, range: searchRange) {
+                let column = lineText.distance(from: lineText.startIndex, to: range.lowerBound)
+                searchMatches.append(SearchMatch(row: row, column: column, length: query.count))
+                searchRange = range.upperBound..<lineText.endIndex
+            }
+        }
+
+        if searchMatches.isEmpty {
+            return false
+        }
+
+        currentMatchIndex = backwards ? searchMatches.count - 1 : 0
+        highlightCurrentMatch()
+        return true
+    }
+
+    func findNext() -> Bool {
+        guard !searchMatches.isEmpty else { return false }
+        currentMatchIndex = (currentMatchIndex + 1) % searchMatches.count
+        highlightCurrentMatch()
+        return true
+    }
+
+    func findPrevious() -> Bool {
+        guard !searchMatches.isEmpty else { return false }
+        currentMatchIndex = (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
+        highlightCurrentMatch()
+        return true
+    }
+
+    func clearSearch() {
+        searchMatches.removeAll()
+        currentMatchIndex = 0
+        currentSearchQuery = ""
+        metalView?.setSelection(start: nil, end: nil)
+    }
+
+    private func highlightCurrentMatch() {
+        guard currentMatchIndex < searchMatches.count else { return }
+        let match = searchMatches[currentMatchIndex]
+
+        // Highlight the match using selection
+        metalView?.setSelection(
+            start: (row: match.row, col: match.column),
+            end: (row: match.row, col: match.column + match.length - 1)
+        )
     }
 }

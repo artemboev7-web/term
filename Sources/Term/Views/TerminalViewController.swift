@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 
 class TerminalViewController: NSViewController {
     private var splitView: NSSplitView!
