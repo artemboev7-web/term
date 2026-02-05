@@ -66,9 +66,10 @@ final class MetalTerminalView: MTKView {
         colorPixelFormat = .bgra8Unorm
         clearColor = MTLClearColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 1.0)
 
-        // Use display link for rendering instead of MTKView's built-in loop
-        enableSetNeedsDisplay = false
-        isPaused = true
+        // Manual rendering via CVDisplayLink
+        enableSetNeedsDisplay = true
+        isPaused = false
+        preferredFramesPerSecond = 60
 
         // Enable layer-backed view
         wantsLayer = true
@@ -278,6 +279,10 @@ final class MetalTerminalView: MTKView {
 
     // MARK: - Rendering
 
+    override func draw(_ rect: CGRect) {
+        renderFrame()
+    }
+
     private func renderFrame() {
         guard let renderer = renderer,
               let cellGrid = cellGrid,
@@ -405,6 +410,7 @@ final class MetalTerminalView: MTKView {
     func markAllDirty() {
         dirtyTracker?.markFullyDirty()
         needsFullRedraw = true
+        setNeedsDisplay(bounds)
     }
 
     func markScrollRegion(top: Int, bottom: Int, scrolled: Int) {
