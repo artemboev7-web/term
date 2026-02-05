@@ -305,6 +305,9 @@ final class MetalTerminalView: MTKView {
         let cursorRow = terminal.buffer.y
         setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
 
+        // Sync selection from SwiftTerm
+        syncSelection(from: terminal)
+
         // Build cell instances
         let instances = cellGrid.buildInstances(from: terminal, rows: rows, cols: cols)
 
@@ -461,9 +464,69 @@ final class MetalTerminalView: MTKView {
     }
 }
 
+// MARK: - Event Forwarding
+
+extension MetalTerminalView {
+    // Forward mouse events to SwiftTerm for proper handling
+    // Metal view is overlay, so it intercepts events
+
+    override func mouseDown(with event: NSEvent) {
+        terminalView?.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        terminalView?.mouseUp(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        terminalView?.mouseDragged(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        terminalView?.mouseMoved(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        terminalView?.scrollWheel(with: event)
+        markAllDirty()  // Scrolling changes visible content
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        terminalView?.rightMouseDown(with: event)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        terminalView?.rightMouseUp(with: event)
+    }
+
+    // Forward keyboard to SwiftTerm (it's first responder anyway)
+    override var acceptsFirstResponder: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Pass through to SwiftTerm for proper event handling
+        // but still receive mouse events
+        return super.hitTest(point)
+    }
+}
+
 // MARK: - Sync Helper
 
 extension MetalTerminalView {
+    /// Sync selection state from SwiftTerm
+    private func syncSelection(from terminal: Terminal) {
+        // Check if selection is active in SwiftTerm
+        if terminal.selection.active {
+            let start = terminal.selection.start
+            let end = terminal.selection.end
+            setSelection(
+                start: (row: start.row, col: start.col),
+                end: (row: end.row, col: end.col)
+            )
+        } else {
+            setSelection(start: nil, end: nil)
+        }
+    }
+
     /// Synchronize state from SwiftTerm view
     func syncFromTerminal() {
         guard let terminalView = terminalView else { return }
@@ -474,6 +537,9 @@ extension MetalTerminalView {
         let cursorCol = terminal.buffer.x
         let cursorRow = terminal.buffer.y
         setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
+
+        // Sync selection
+        syncSelection(from: terminal)
 
         // Trigger redraw
         markAllDirty()
