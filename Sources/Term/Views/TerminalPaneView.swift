@@ -426,9 +426,8 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     }
 
     func terminalDidUpdate(_ terminal: TerminalEmulator) {
-        DispatchQueue.main.async { [weak self] in
-            self?.metalView?.markAllDirty()
-        }
+        // PTYManager already dispatches data to main thread — no need for extra async hop
+        metalView?.markAllDirty()
     }
 
     func terminal(_ terminal: TerminalEmulator, sizeChanged cols: Int, rows: Int) {

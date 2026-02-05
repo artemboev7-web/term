@@ -500,14 +500,12 @@ final class MetalTerminalView: MTKView {
 // MARK: - Event Handling
 
 extension MetalTerminalView {
-    override var acceptsFirstResponder: Bool { true }
-
-    // Mouse handling is done in parent view (TerminalPaneView)
-    // This view just renders, input is handled at a higher level
+    // Rendering only — input is handled by parent TerminalPaneView
+    override var acceptsFirstResponder: Bool { false }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Pass through to parent for proper event handling
-        return super.hitTest(point)
+        // Pass through all mouse events to parent TerminalPaneView
+        return nil
     }
 }
 

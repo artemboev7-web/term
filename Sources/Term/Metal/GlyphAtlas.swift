@@ -285,14 +285,17 @@ final class GlyphAtlas {
     private func updateTexture(rect: PackedRect, width: Int, height: Int) {
         guard let texture = texture, let data = contextData else { return }
 
-        // Calculate source offset in context data
         let srcBytesPerRow = size
-        let srcOffset = rect.y * srcBytesPerRow + rect.x
+
+        // CGContext coordinates: y=0 at bottom (drawing), but memory row 0 is at top.
+        // Glyph drawn at CG y=rect.y occupies memory rows [(size - rect.y - height), (size - rect.y - 1)]
+        let memStartRow = size - rect.y - height
 
         // Create temporary buffer for the glyph region
         var glyphData = [UInt8](repeating: 0, count: width * height)
         for row in 0..<height {
-            let srcRowOffset = srcOffset + row * srcBytesPerRow
+            let memRow = memStartRow + row
+            let srcRowOffset = memRow * srcBytesPerRow + rect.x
             let dstRowOffset = row * width
             let srcPtr = data.advanced(by: srcRowOffset).bindMemory(to: UInt8.self, capacity: width)
             for col in 0..<width {
