@@ -42,9 +42,6 @@ final class GlyphAtlas {
         // Pre-cache ASCII characters
         precacheASCII()
 
-        // Debug: save atlas to file for visual inspection
-        saveAtlasToPNG()
-
         logInfo("GlyphAtlas created: \(size)x\(size)", context: "GlyphAtlas")
     }
 
@@ -156,9 +153,6 @@ final class GlyphAtlas {
 
         // Re-cache ASCII
         precacheASCII()
-
-        // Debug: save updated atlas
-        saveAtlasToPNG(path: "/tmp/glyph_atlas_after_font.png")
 
         logInfo("Font changed: \(font.fontName) \(font.pointSize)pt", context: "GlyphAtlas")
     }

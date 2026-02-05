@@ -213,11 +213,11 @@ fragment float4 fragment_glyph(
     // Sample glyph alpha from atlas
     float alpha = glyphAtlas.sample(texSampler, in.texCoord).r;
 
-    // DEBUG: Visualize alpha as white to verify glyph sampling works
-    // return float4(alpha, alpha, alpha, 1.0);  // Shows glyph alpha as grayscale
-
-    // DEBUG: Show UV coordinates as colors
-    // return float4(in.texCoord.x * 20.0, in.texCoord.y * 20.0, alpha, 1.0);
+    // DEBUG: Show all glyphs as visible colors regardless of alpha
+    // Red intensity = alpha, so we can see if sampling works
+    // If glyphs render as dark red boxes, sampling works but alpha is low
+    // If no red at all, glyph pass isn't running
+    return float4(1.0, alpha, alpha, 1.0);  // Red with alpha-modulated green/blue
 
     // Text color
     float4 textColor = in.fgColor;
