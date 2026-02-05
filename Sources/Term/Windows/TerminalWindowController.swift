@@ -8,7 +8,7 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -26,26 +26,50 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.title = "Term"
         window.minSize = NSSize(width: 400, height: 300)
+
+        // v0 style: transparent titlebar, dark
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.backgroundColor = Settings.shared.theme.background
         window.isMovableByWindowBackground = true
 
-        // Toolbar style для tabs
-        window.toolbarStyle = .unified
+        // Subtle shadow
+        window.hasShadow = true
+
+        // Rounded corners (macOS 11+)
+        if #available(macOS 11.0, *) {
+            window.toolbarStyle = .unified
+        }
+
+        // Optional: semi-transparent для glass effect
+        window.isOpaque = true
+        window.alphaValue = CGFloat(Settings.shared.windowOpacity)
+
+        // Toolbar для native tabs
         window.toolbar = NSToolbar()
         window.toolbar?.showsBaselineSeparator = false
 
+        // Native macOS tabs
+        window.tabbingMode = .preferred
+
         window.center()
+
+        // Subscribe to theme changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThemeChange),
+            name: .themeChanged,
+            object: nil
+        )
+    }
+
+    @objc private func handleThemeChange() {
+        window?.backgroundColor = Settings.shared.theme.background
     }
 
     private func setupTabViewController() {
         tabViewController = NSTabViewController()
         tabViewController.tabStyle = .unspecified
-
-        // Используем window tabs вместо NSTabView
-        window?.tabbingMode = .preferred
-
         contentViewController = tabViewController
     }
 
@@ -54,20 +78,13 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     func addNewTab() {
         tabCount += 1
         let terminalVC = TerminalViewController()
-        terminalVC.title = "Terminal \(tabCount)"
+        terminalVC.title = "zsh"
 
         let tabItem = NSTabViewItem(viewController: terminalVC)
-        tabItem.label = "Terminal \(tabCount)"
+        tabItem.label = "zsh"
 
         tabViewController.addTabViewItem(tabItem)
         tabViewController.selectedTabViewItemIndex = tabViewController.tabViewItems.count - 1
-
-        // Создаём новую window tab если уже есть tabs
-        if tabViewController.tabViewItems.count > 1 {
-            if let newWindow = window?.addTabbedWindow(with: terminalVC) {
-                newWindow.makeKeyAndOrderFront(nil)
-            }
-        }
 
         updateWindowTitle()
     }
@@ -137,6 +154,13 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let appDelegate = NSApp.delegate as? AppDelegate {
             appDelegate.windowWillClose(self)
+        }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        // Focus terminal when window becomes key
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            currentVC.focusTerminal()
         }
     }
 }

@@ -13,6 +13,9 @@ class TerminalPaneView: NSView {
     private var terminalView: LocalProcessTerminalView!
     private var isActive = false
 
+    // v0 style: subtle glow layer for cursor
+    private var glowLayer: CALayer?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
@@ -24,19 +27,28 @@ class TerminalPaneView: NSView {
     }
 
     private func setup() {
+        wantsLayer = true
+
+        // v0 style background
+        layer?.backgroundColor = Settings.shared.theme.background.cgColor
+
+        // Subtle inner shadow / border effect
+        layer?.borderWidth = 0.5
+        layer?.borderColor = Settings.shared.theme.border.cgColor
+
         // Создаём терминал
         terminalView = LocalProcessTerminalView(frame: bounds)
-        terminalView.autoresizingMask = [.width, .height]
         terminalView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(terminalView)
 
-        // Constraints
+        // Constraints with small padding
+        let padding: CGFloat = 8
         NSLayoutConstraint.activate([
-            terminalView.topAnchor.constraint(equalTo: topAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor)
+            terminalView.topAnchor.constraint(equalTo: topAnchor, constant: padding),
+            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
+            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding)
         ])
 
         // Настройка
@@ -51,18 +63,58 @@ class TerminalPaneView: NSView {
 
     private func applySettings() {
         let settings = Settings.shared
+        let theme = settings.theme
 
-        // Шрифт
-        terminalView.font = NSFont.monospacedSystemFont(
-            ofSize: CGFloat(settings.fontSize),
-            weight: .regular
-        )
+        // Шрифт - v0 style uses slightly lighter weight
+        if let font = NSFont(name: "SF Mono", size: CGFloat(settings.fontSize)) {
+            terminalView.font = font
+        } else if let font = NSFont(name: "JetBrains Mono", size: CGFloat(settings.fontSize)) {
+            terminalView.font = font
+        } else {
+            terminalView.font = NSFont.monospacedSystemFont(
+                ofSize: CGFloat(settings.fontSize),
+                weight: .regular
+            )
+        }
 
-        // Цвета
-        terminalView.nativeBackgroundColor = settings.theme.background
-        terminalView.nativeForegroundColor = settings.theme.foreground
-        terminalView.caretColor = settings.theme.cursor
-        terminalView.selectedTextBackgroundColor = settings.theme.selection
+        // v0 style colors
+        terminalView.nativeBackgroundColor = theme.background
+        terminalView.nativeForegroundColor = theme.foreground
+        terminalView.caretColor = theme.cursor
+        terminalView.selectedTextBackgroundColor = theme.selection
+
+        // Apply ANSI colors
+        applyAnsiColors(theme)
+    }
+
+    private func applyAnsiColors(_ theme: Theme) {
+        // SwiftTerm allows customizing ANSI palette
+        // This is done through the terminal's color settings
+        let colors: [NSColor] = [
+            theme.black,
+            theme.red,
+            theme.green,
+            theme.yellow,
+            theme.blue,
+            theme.magenta,
+            theme.cyan,
+            theme.white,
+            theme.brightBlack,
+            theme.brightRed,
+            theme.brightGreen,
+            theme.brightYellow,
+            theme.brightBlue,
+            theme.brightMagenta,
+            theme.brightCyan,
+            theme.brightWhite
+        ]
+
+        // Set the ANSI colors on the terminal
+        for (index, color) in colors.enumerated() {
+            terminalView.installColors(
+                [color.usingColorSpace(.deviceRGB) ?? color]
+            )
+        }
     }
 
     private func startShell() {
@@ -74,8 +126,13 @@ class TerminalPaneView: NSView {
             env.append("\(key)=\(value)")
         }
 
-        // Добавляем TERM
+        // Добавляем TERM с 256 colors
         env.append("TERM=xterm-256color")
+        env.append("COLORTERM=truecolor")
+
+        // Force color output
+        env.append("CLICOLOR=1")
+        env.append("CLICOLOR_FORCE=1")
 
         terminalView.startProcess(
             executable: shell,
@@ -89,8 +146,16 @@ class TerminalPaneView: NSView {
 
     func focus() {
         isActive = true
-        terminalView.becomeFirstResponder()
+        window?.makeFirstResponder(terminalView)
         delegate?.paneDidBecomeActive(self)
+
+        // v0 style: subtle highlight on active pane
+        layer?.borderColor = Settings.shared.theme.cursor.withAlphaComponent(0.3).cgColor
+    }
+
+    func blur() {
+        isActive = false
+        layer?.borderColor = Settings.shared.theme.border.cgColor
     }
 
     func clear() {
@@ -99,18 +164,29 @@ class TerminalPaneView: NSView {
     }
 
     func updateFont() {
-        terminalView.font = NSFont.monospacedSystemFont(
-            ofSize: CGFloat(Settings.shared.fontSize),
-            weight: .regular
-        )
+        let settings = Settings.shared
+        if let font = NSFont(name: "SF Mono", size: CGFloat(settings.fontSize)) {
+            terminalView.font = font
+        } else {
+            terminalView.font = NSFont.monospacedSystemFont(
+                ofSize: CGFloat(settings.fontSize),
+                weight: .regular
+            )
+        }
     }
 
     func updateTheme() {
         let theme = Settings.shared.theme
+
+        layer?.backgroundColor = theme.background.cgColor
+        layer?.borderColor = isActive ? theme.cursor.withAlphaComponent(0.3).cgColor : theme.border.cgColor
+
         terminalView.nativeBackgroundColor = theme.background
         terminalView.nativeForegroundColor = theme.foreground
         terminalView.caretColor = theme.cursor
         terminalView.selectedTextBackgroundColor = theme.selection
+
+        applyAnsiColors(theme)
     }
 
     // MARK: - Mouse Events
@@ -118,6 +194,10 @@ class TerminalPaneView: NSView {
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         focus()
+    }
+
+    override var acceptsFirstResponder: Bool {
+        return true
     }
 }
 

@@ -7,12 +7,29 @@ class TerminalViewController: NSViewController {
     private var activePaneIndex = 0
 
     override func loadView() {
+        // Container view with padding for v0-style border
+        let container = NSView()
+        container.wantsLayer = true
+
         splitView = NSSplitView()
         splitView.isVertical = true
         splitView.dividerStyle = .thin
-        splitView.autoresizingMask = [.width, .height]
+        splitView.translatesAutoresizingMaskIntoConstraints = false
 
-        view = splitView
+        // v0 style: subtle divider
+        splitView.setValue(NSColor(white: 0.15, alpha: 1.0), forKey: "dividerColor")
+
+        container.addSubview(splitView)
+
+        // Small padding for aesthetic
+        NSLayoutConstraint.activate([
+            splitView.topAnchor.constraint(equalTo: container.topAnchor, constant: 1),
+            splitView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -1),
+            splitView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 1),
+            splitView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -1)
+        ])
+
+        view = container
 
         // Создаём первую панель
         addTerminalPane()
@@ -78,6 +95,10 @@ class TerminalViewController: NSViewController {
         terminalPanes[safe: activePaneIndex]?.clear()
     }
 
+    func focusTerminal() {
+        terminalPanes[safe: activePaneIndex]?.focus()
+    }
+
     // MARK: - Settings
 
     @objc private func handleFontChange() {
@@ -87,6 +108,7 @@ class TerminalViewController: NSViewController {
     }
 
     @objc private func handleThemeChange() {
+        view.layer?.backgroundColor = Settings.shared.theme.background.cgColor
         for pane in terminalPanes {
             pane.updateTheme()
         }
