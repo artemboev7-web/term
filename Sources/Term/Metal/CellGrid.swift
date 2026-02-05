@@ -105,8 +105,14 @@ final class CellGrid {
     }
 
     private func buildCellInstance(charData: CharData, row: Int, col: Int) -> CellInstance {
-        // Get codepoint
-        let codepoint = UInt32(bitPattern: charData.code)
+        // Get codepoint from Character (code property is internal)
+        let char = charData.getCharacter()
+        let codepoint: UInt32
+        if let scalar = char.unicodeScalars.first {
+            codepoint = scalar.value
+        } else {
+            codepoint = 0x20  // space
+        }
 
         // Determine colors from attribute
         let (fgColor, bgColor) = resolveColors(attribute: charData.attribute)
@@ -183,7 +189,7 @@ final class CellGrid {
         return (fgColor, bgColor)
     }
 
-    private func resolveColor(_ color: SwiftTerm.Color, isBackground: Bool) -> simd_float4 {
+    private func resolveColor(_ color: Attribute.Color, isBackground: Bool) -> simd_float4 {
         switch color {
         case .defaultColor:
             return isBackground ? defaultBgColor : defaultFgColor

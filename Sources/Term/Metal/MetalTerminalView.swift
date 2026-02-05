@@ -513,21 +513,12 @@ extension MetalTerminalView {
 
 extension MetalTerminalView {
     /// Sync selection state from SwiftTerm view
+    /// Note: Selection is handled by SwiftTerm's native rendering.
+    /// Mouse events are forwarded, so SwiftTerm manages selection state.
     private func syncSelection() {
-        guard let terminalView = terminalView else {
-            setSelection(start: nil, end: nil)
-            return
-        }
-
-        // Get selection from LocalProcessTerminalView
-        // SwiftTerm uses getSelectedText() to check if there's selection
-        let selectedText = terminalView.getSelectedText()
-        if selectedText.isEmpty {
-            setSelection(start: nil, end: nil)
-        }
-        // Note: Selection bounds are handled internally by SwiftTerm view
-        // We don't have direct access to start/end coords, so selection
-        // highlighting relies on SwiftTerm's native rendering
+        // Selection sync disabled - SwiftTerm handles selection internally
+        // and we forward mouse events to it. The Metal view renders
+        // on top, so selection appears via the underlying SwiftTerm view.
     }
 
     /// Synchronize state from SwiftTerm view
