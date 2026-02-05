@@ -3,6 +3,7 @@ import CoreText
 import CoreGraphics
 import AppKit
 import simd
+import UniformTypeIdentifiers
 
 /// Texture atlas for glyph caching
 final class GlyphAtlas {
@@ -40,6 +41,9 @@ final class GlyphAtlas {
 
         // Pre-cache ASCII characters
         precacheASCII()
+
+        // Debug: save atlas to file for visual inspection
+        saveAtlasToPNG()
 
         logInfo("GlyphAtlas created: \(size)x\(size)", context: "GlyphAtlas")
     }
@@ -242,18 +246,26 @@ final class GlyphAtlas {
         }
 
         // Render glyph to context
+        // IMPORTANT: CGContext has origin at bottom-left (y=0 at bottom)
+        // but memory row 0 = visual top. Packer uses top-down coords (y=0 at top).
+        // We need to convert packer coords to CG coords.
         context.saveGState()
 
-        // Clear the glyph area
+        // Convert packer Y (top-down) to CGContext Y (bottom-up)
+        // Packer rect.y=0 means top of atlas, which in CG coords is y=size-height
+        let cgRectY = CGFloat(size - rect.y - glyphHeight)
+
+        // Clear the glyph area in CG coordinates
         context.setFillColor(gray: 0, alpha: 1)
-        context.fill(CGRect(x: rect.x, y: rect.y, width: glyphWidth, height: glyphHeight))
+        context.fill(CGRect(x: CGFloat(rect.x), y: cgRectY, width: CGFloat(glyphWidth), height: CGFloat(glyphHeight)))
 
         // Set text color (white)
         context.setFillColor(gray: 1, alpha: 1)
 
-        // Calculate position for baseline
+        // Calculate position for baseline in CG coordinates
+        // Baseline should be at cgRectY + padding + descent from bottom of glyph rect
         let x = CGFloat(rect.x) + padding - boundingRect.origin.x
-        let y = CGFloat(rect.y) + padding + descent
+        let y = cgRectY + padding + descent
 
         // Draw glyph
         var position = CGPoint(x: x, y: y)
@@ -264,7 +276,7 @@ final class GlyphAtlas {
         // Copy rendered data to texture
         updateTexture(rect: rect, width: glyphWidth, height: glyphHeight)
 
-        // Create glyph info
+        // Create glyph info - UV coordinates match texture position
         let info = GlyphInfo(
             uvOffset: simd_float2(Float(rect.x) / Float(size), Float(rect.y) / Float(size)),
             uvSize: simd_float2(Float(glyphWidth) / Float(size), Float(glyphHeight) / Float(size)),
@@ -275,6 +287,12 @@ final class GlyphAtlas {
         )
 
         glyphCache[key] = info
+
+        // Debug: log first few non-space glyphs
+        if glyphCache.count <= 5 && key.codepoint > 32 {
+            logDebug("Rendered glyph '\(UnicodeScalar(key.codepoint)!)' at rect(\(rect.x),\(rect.y)) uv(\(info.uvOffset.x),\(info.uvOffset.y)) size(\(info.uvSize.x),\(info.uvSize.y))", context: "GlyphAtlas")
+        }
+
         return info
     }
 
@@ -297,14 +315,21 @@ final class GlyphAtlas {
 
         let srcBytesPerRow = size
 
-        // CGContext coordinates: y=0 at bottom (drawing), but memory row 0 is at top.
-        // Glyph drawn at CG y=rect.y occupies memory rows [(size - rect.y - height), (size - rect.y - 1)]
-        let memStartRow = size - rect.y - height
+        // CGContext memory layout: row 0 = visual TOP of context
+        // We drew glyph at CG coords (rect.x, size - rect.y - height) which means:
+        // - CG y coordinate starts at (size - rect.y - height)
+        // - In memory, this corresponds to rows starting from rect.y (top-down)
+        //
+        // Memory row formula: memRow = size - 1 - cgY
+        // For cgY = size - rect.y - height: memRow = size - 1 - (size - rect.y - height) = rect.y + height - 1
+        // For cgY = size - rect.y - 1:      memRow = size - 1 - (size - rect.y - 1) = rect.y
+        //
+        // So the glyph occupies memory rows [rect.y, rect.y + height - 1] from top to bottom
 
-        // Create temporary buffer for the glyph region
+        // Copy glyph data from CGContext memory directly (no flip needed, both are top-down)
         var glyphData = [UInt8](repeating: 0, count: width * height)
         for row in 0..<height {
-            let memRow = memStartRow + row
+            let memRow = rect.y + row
             let srcRowOffset = memRow * srcBytesPerRow + rect.x
             let dstRowOffset = row * width
             let srcPtr = data.advanced(by: srcRowOffset).bindMemory(to: UInt8.self, capacity: width)
@@ -313,7 +338,8 @@ final class GlyphAtlas {
             }
         }
 
-        // Upload to texture
+        // Upload to texture at rect position (rect is in packer coordinates, top-left origin)
+        // Metal texture also has origin at top-left, so coordinates match
         texture.replace(
             region: MTLRegion(
                 origin: MTLOrigin(x: rect.x, y: rect.y, z: 0),
@@ -349,6 +375,73 @@ final class GlyphAtlas {
         }
         needsSynchronize = false
         #endif
+    }
+
+    // MARK: - Debug
+
+    /// Save glyph atlas texture to PNG for debugging
+    func saveAtlasToPNG(path: String = "/tmp/glyph_atlas.png") {
+        guard let texture = texture else {
+            logError("No texture to save", context: "GlyphAtlas")
+            return
+        }
+
+        // Read texture data
+        let bytesPerRow = size
+        var data = [UInt8](repeating: 0, count: size * size)
+        texture.getBytes(
+            &data,
+            bytesPerRow: bytesPerRow,
+            from: MTLRegion(
+                origin: MTLOrigin(x: 0, y: 0, z: 0),
+                size: MTLSize(width: size, height: size, depth: 1)
+            ),
+            mipmapLevel: 0
+        )
+
+        // Convert grayscale to RGBA for PNG
+        var rgbaData = [UInt8](repeating: 0, count: size * size * 4)
+        for i in 0..<(size * size) {
+            let gray = data[i]
+            rgbaData[i * 4 + 0] = gray  // R
+            rgbaData[i * 4 + 1] = gray  // G
+            rgbaData[i * 4 + 2] = gray  // B
+            rgbaData[i * 4 + 3] = 255   // A
+        }
+
+        // Create CGImage
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: &rgbaData,
+            width: size,
+            height: size,
+            bitsPerComponent: 8,
+            bytesPerRow: size * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            logError("Failed to create CGContext for PNG", context: "GlyphAtlas")
+            return
+        }
+
+        guard let image = context.makeImage() else {
+            logError("Failed to create CGImage", context: "GlyphAtlas")
+            return
+        }
+
+        // Save as PNG
+        let url = URL(fileURLWithPath: path)
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            logError("Failed to create image destination", context: "GlyphAtlas")
+            return
+        }
+
+        CGImageDestinationAddImage(destination, image, nil)
+        if CGImageDestinationFinalize(destination) {
+            logInfo("Saved atlas to \(path)", context: "GlyphAtlas")
+        } else {
+            logError("Failed to finalize PNG", context: "GlyphAtlas")
+        }
     }
 
     // MARK: - Helpers

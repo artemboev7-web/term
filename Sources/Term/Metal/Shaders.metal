@@ -12,10 +12,11 @@ struct CellInstance {
     float2 position;     // Grid position (col, row)
     float2 uvOffset;     // UV offset in atlas
     float2 uvSize;       // UV size in atlas
+    float2 _padding0;    // Alignment padding (Swift simd_float4 requires 16-byte alignment)
     float4 fgColor;      // Foreground (text) color
     float4 bgColor;      // Background color
     uint flags;          // Style flags
-    uint padding;
+    uint _padding1;      // Alignment padding
 };
 
 struct Uniforms {
@@ -159,6 +160,8 @@ vertex VertexOut vertex_glyph(
         float2(1, 0), float2(1, 1), float2(0, 1)
     };
 
+    // Texture coords match quad positions (no flip needed)
+    // Both Metal texture and our atlas have origin at top-left
     float2 quadTexCoords[6] = {
         float2(0, 0), float2(1, 0), float2(0, 1),
         float2(1, 0), float2(1, 1), float2(0, 1)
