@@ -13,7 +13,16 @@ let package = Package(
         .executableTarget(
             name: "Term",
             dependencies: ["SwiftTerm"],
-            path: "Sources/Term"
+            path: "Sources/Term",
+            sources: [
+                "App/TermApp.swift",
+                "App/AppDelegate.swift",
+                "Windows/TerminalWindowController.swift",
+                "Windows/PreferencesWindowController.swift",
+                "Views/TerminalViewController.swift",
+                "Views/TerminalPaneView.swift",
+                "Settings/Settings.swift"
+            ]
         )
     ]
 )
