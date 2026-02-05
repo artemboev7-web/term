@@ -19,6 +19,8 @@ class TerminalPaneView: NSView {
 
     private var terminalView: LocalProcessTerminalView!
     private var vibrancyView: NSVisualEffectView?
+    private var metalView: MetalTerminalView?  // GPU-accelerated rendering
+    private var useMetalRenderer: Bool = true  // Toggle for Metal vs SwiftTerm rendering
     private var isActive = false
     private let paneId = UUID().uuidString.prefix(8)
 
@@ -86,6 +88,9 @@ class TerminalPaneView: NSView {
 
         // Обработка завершения процесса
         terminalView.processDelegate = self
+
+        // Setup Metal renderer overlay
+        setupMetalRenderer()
 
         // Subscribe to vibrancy changes
         NotificationCenter.default.addObserver(
@@ -163,6 +168,53 @@ class TerminalPaneView: NSView {
         layer?.backgroundColor = Settings.shared.theme.background.withAlphaComponent(0.7).cgColor
     }
 
+    // MARK: - Metal Renderer
+
+    private func setupMetalRenderer() {
+        guard useMetalRenderer else {
+            logDebug("Metal renderer disabled", context: "TerminalPane")
+            return
+        }
+
+        // Try to create Metal view
+        guard let metal = MetalTerminalView(frame: terminalView.bounds, terminalView: terminalView) else {
+            logWarning("Failed to create MetalTerminalView, falling back to SwiftTerm rendering", context: "TerminalPane")
+            useMetalRenderer = false
+            return
+        }
+
+        metal.translatesAutoresizingMaskIntoConstraints = false
+        metal.applyTheme(Settings.shared.theme)
+
+        // Add Metal view as overlay on top of SwiftTerm
+        addSubview(metal, positioned: .above, relativeTo: terminalView)
+
+        NSLayoutConstraint.activate([
+            metal.topAnchor.constraint(equalTo: terminalView.topAnchor),
+            metal.bottomAnchor.constraint(equalTo: terminalView.bottomAnchor),
+            metal.leadingAnchor.constraint(equalTo: terminalView.leadingAnchor),
+            metal.trailingAnchor.constraint(equalTo: terminalView.trailingAnchor)
+        ])
+
+        metalView = metal
+
+        // Hide SwiftTerm's native rendering (it still handles input and buffer)
+        terminalView.alphaValue = 0
+
+        // Setup display link for smooth animation
+        setupDisplayLink()
+
+        logInfo("Metal renderer initialized for pane \(paneId)", context: "TerminalPane")
+    }
+
+    private func setupDisplayLink() {
+        // Use CADisplayLink for smooth 60fps rendering
+        // For now, use a timer as fallback
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.metalView?.syncFromTerminal()
+        }
+    }
+
     @objc private func handleVibrancyChange() {
         logDebug("Vibrancy setting changed", context: "TerminalPane")
         setupVibrancy()
@@ -206,17 +258,24 @@ class TerminalPaneView: NSView {
         let settings = Settings.shared
         let size = CGFloat(settings.fontSize)
 
+        var appliedFont: NSFont
+
         // Try custom font first
         if let font = NSFont(name: settings.fontFamily, size: size) {
             logDebug("Using font: \(settings.fontFamily)", context: "TerminalPane")
-            terminalView.font = font
+            appliedFont = font
         } else if let font = NSFont(name: "SF Mono", size: size) {
             logWarning("Font '\(settings.fontFamily)' not found, falling back to SF Mono", context: "TerminalPane")
-            terminalView.font = font
+            appliedFont = font
         } else {
             logWarning("Falling back to system monospace font", context: "TerminalPane")
-            terminalView.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            appliedFont = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         }
+
+        terminalView.font = appliedFont
+
+        // Update Metal view font
+        metalView?.setFont(appliedFont)
     }
 
     private func applyAnsiColors(_ theme: Theme) {
@@ -322,6 +381,9 @@ class TerminalPaneView: NSView {
         terminalView.selectedTextBackgroundColor = theme.selection
 
         applyAnsiColors(theme)
+
+        // Update Metal view theme
+        metalView?.applyTheme(theme)
     }
 
     // MARK: - Search

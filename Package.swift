@@ -23,7 +23,15 @@ let package = Package(
                 "Views/TerminalPaneView.swift",
                 "Views/SearchBarView.swift",
                 "Settings/Settings.swift",
-                "Utils/Logger.swift"
+                "Utils/Logger.swift",
+                // Metal renderer
+                "Metal/ShaderTypes.swift",
+                "Metal/Shaders.metal",
+                "Metal/MetalRenderer.swift",
+                "Metal/GlyphAtlas.swift",
+                "Metal/CellGrid.swift",
+                "Metal/MetalTerminalView.swift",
+                "Metal/DirtyTracking.swift"
             ]
         )
     ]
