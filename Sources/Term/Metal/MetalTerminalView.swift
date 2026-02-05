@@ -83,8 +83,8 @@ final class MetalTerminalView: MTKView {
         // Setup triple buffering
         setupTripleBuffering()
 
-        // Setup display link
-        setupDisplayLink()
+        // Don't use CVDisplayLink - let MTKView handle rendering internally
+        // setupDisplayLink()
 
         // Setup cursor blink
         setupCursorBlink()
@@ -284,10 +284,20 @@ final class MetalTerminalView: MTKView {
     }
 
     private func renderFrame() {
-        guard let renderer = renderer,
-              let cellGrid = cellGrid,
-              let terminal = terminal,
-              let drawable = currentDrawable else {
+        guard let renderer = renderer else {
+            logDebug("renderFrame: no renderer", context: "MetalTerminalView")
+            return
+        }
+        guard let cellGrid = cellGrid else {
+            logDebug("renderFrame: no cellGrid", context: "MetalTerminalView")
+            return
+        }
+        guard let terminal = terminal else {
+            logDebug("renderFrame: no terminal", context: "MetalTerminalView")
+            return
+        }
+        guard let drawable = currentDrawable else {
+            // This is normal when view is not visible
             return
         }
 
