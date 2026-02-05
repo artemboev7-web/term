@@ -1,0 +1,76 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14  # Apple Silicon (M1)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '5.10'
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Run tests (if any)
+        run: swift test || echo "No tests yet"
+        continue-on-error: true
+
+      - name: Build App Bundle
+        run: |
+          # Create .app structure
+          APP_NAME="Term"
+          APP_DIR="build/${APP_NAME}.app"
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
+
+          # Copy binary
+          cp .build/release/Term "${APP_DIR}/Contents/MacOS/"
+
+          # Copy Metal shaders
+          cp Sources/Term/Metal/Shaders.metal "${APP_DIR}/Contents/Resources/"
+
+          # Create Info.plist
+          cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>Term</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.term.app</string>
+              <key>CFBundleName</key>
+              <string>Term</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          echo "Built ${APP_DIR}"
+          ls -la "${APP_DIR}/Contents/MacOS/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Term-app
+          path: build/Term.app
+          retention-days: 7
