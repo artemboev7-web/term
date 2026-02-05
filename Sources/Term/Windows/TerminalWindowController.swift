@@ -61,7 +61,11 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         // Native macOS tabs
         window.tabbingMode = .preferred
 
-        window.center()
+        // Restore saved window position/size, or center if first launch
+        window.setFrameAutosaveName("TermMainWindow")
+        if window.frame.origin == .zero {
+            window.center()
+        }
 
         // Subscribe to theme changes
         NotificationCenter.default.addObserver(

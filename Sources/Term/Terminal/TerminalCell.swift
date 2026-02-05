@@ -198,9 +198,11 @@ public final class TerminalLine {
     /// Insert characters at position, shifting right
     public func insertCharacters(at col: Int, count: Int, attribute: CellAttribute = .default) {
         guard col >= 0 && col < cells.count && count > 0 else { return }
+        // Calculate removeLast BEFORE insert to avoid off-by-one (cells.count changes after insert)
+        let removeCount = min(count, cells.count - col)
         let insertCells = Array(repeating: TerminalCell(attribute: attribute), count: count)
         cells.insert(contentsOf: insertCells, at: col)
-        cells.removeLast(min(count, cells.count - col))
+        cells.removeLast(removeCount)
     }
 
     /// Delete characters at position, shifting left

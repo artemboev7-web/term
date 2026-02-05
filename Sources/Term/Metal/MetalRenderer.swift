@@ -40,7 +40,7 @@ final class MetalRenderer {
     )
 
     private var instanceCount: Int = 0
-    private let maxInstances: Int = 80 * 50  // Max 4000 cells
+    private var maxInstances: Int = 80 * 50  // Dynamic, grows as needed
 
     // MARK: - Initialization
 
@@ -327,8 +327,11 @@ final class MetalRenderer {
     }
 
     /// Render with external instance buffer (for triple buffering)
-    func renderWithBuffer(in view: MTKView, drawable: CAMetalDrawable, instanceBuffer: MTLBuffer?, instanceCount: Int) {
-        guard let instanceBuffer = instanceBuffer, instanceCount > 0 else { return }
+    func renderWithBuffer(in view: MTKView, drawable: CAMetalDrawable, instanceBuffer: MTLBuffer?, instanceCount: Int, onComplete: (() -> Void)? = nil) {
+        guard let instanceBuffer = instanceBuffer, instanceCount > 0 else {
+            onComplete?()
+            return
+        }
 
         // Update time for animations
         uniforms.time += 1.0 / 60.0
@@ -386,6 +389,11 @@ final class MetalRenderer {
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
 
         encoder.endEncoding()
+
+        // Signal completion for triple buffer synchronization
+        if let onComplete {
+            commandBuffer.addCompletedHandler { _ in onComplete() }
+        }
 
         commandBuffer.present(drawable)
         commandBuffer.commit()

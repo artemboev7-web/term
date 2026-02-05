@@ -25,11 +25,16 @@ final class CellGrid {
     // ANSI color palette (16 basic colors)
     private var palette: [simd_float4] = []
 
+    // Pre-resolved color cache for ANSI 0-255 (fg/bg variants)
+    private var fgColorCache: [simd_float4] = []
+    private var bgColorCache: [simd_float4] = []
+
     // MARK: - Initialization
 
     init(glyphAtlas: GlyphAtlas) {
         self.glyphAtlas = glyphAtlas
         setupDefaultPalette()
+        rebuildColorCache()
     }
 
     private func setupDefaultPalette() {
@@ -73,6 +78,24 @@ final class CellGrid {
         for (i, color) in themeColors.enumerated() {
             palette[i] = simd_float4(color)
         }
+
+        rebuildColorCache()
+    }
+
+    /// Pre-resolve all 256 ANSI colors for both fg and bg
+    private func rebuildColorCache() {
+        fgColorCache = (0..<256).map { code in
+            TerminalColor.ansi(UInt8(code)).toFloat4(
+                palette: palette, isBackground: false,
+                defaultFg: defaultFgColor, defaultBg: defaultBgColor
+            )
+        }
+        bgColorCache = (0..<256).map { code in
+            TerminalColor.ansi(UInt8(code)).toFloat4(
+                palette: palette, isBackground: true,
+                defaultFg: defaultFgColor, defaultBg: defaultBgColor
+            )
+        }
     }
 
     // MARK: - Building Instances
@@ -84,9 +107,19 @@ final class CellGrid {
         instances.removeAll(keepingCapacity: true)
         instances.reserveCapacity(rows * cols)
 
+        let scrollOffset = terminal.buffer.scrollOffset
         var linesProcessed = 0
+
         for row in 0..<rows {
-            guard let line = terminal.getLine(row: row) else { continue }
+            // When scrolled up, read from scrollback history
+            let line: TerminalLine?
+            if scrollOffset > 0 {
+                line = terminal.buffer.getLineWithScrollback(row: row - scrollOffset)
+            } else {
+                line = terminal.getLine(row: row)
+            }
+
+            guard let line else { continue }
             linesProcessed += 1
 
             var col = 0
@@ -156,7 +189,7 @@ final class CellGrid {
             flags |= CellInstance.flagCursor
         }
 
-        // Check if selected
+        // Check if selected (adjust for scroll offset)
         if let selection = selectionManager, selection.isSelected(row: row, col: col) {
             flags |= CellInstance.flagSelected
         }
@@ -191,11 +224,16 @@ final class CellGrid {
     }
 
     private func resolveColor(_ color: TerminalColor, isBackground: Bool) -> simd_float4 {
-        return color.toFloat4(
-            palette: palette,
-            isBackground: isBackground,
-            defaultFg: defaultFgColor,
-            defaultBg: defaultBgColor
-        )
+        // Fast path: use pre-resolved cache for ANSI colors
+        switch color {
+        case .default:
+            return isBackground ? defaultBgColor : defaultFgColor
+        case .defaultInverted:
+            return isBackground ? defaultFgColor : defaultBgColor
+        case .ansi(let code):
+            return isBackground ? bgColorCache[Int(code)] : fgColorCache[Int(code)]
+        case .rgb(let r, let g, let b):
+            return simd_float4(Float(r) / 255.0, Float(g) / 255.0, Float(b) / 255.0, 1.0)
+        }
     }
 }

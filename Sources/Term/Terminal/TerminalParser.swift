@@ -445,10 +445,11 @@ public final class TerminalParser {
 
         case 0x3B:
             // ; separates param from string
-            if oscBuffer.isEmpty {
-                // First ; marks end of numeric param
+            if !oscBuffer.isEmpty {
+                // Subsequent ; is part of content
+                oscBuffer.append(Character(UnicodeScalar(byte)))
             }
-            oscBuffer.append(Character(UnicodeScalar(byte)))
+            // First ; just marks end of numeric param — don't add to buffer
 
         case 0x20...0x7E:
             oscBuffer.append(Character(UnicodeScalar(byte)))
@@ -542,12 +543,7 @@ public final class TerminalParser {
     }
 
     private func dispatchOSC() {
-        // Remove leading ; from buffer if present
-        var content = oscBuffer
-        if content.hasPrefix(";") {
-            content.removeFirst()
-        }
-        delegate?.parser(self, osc: oscParam, content: content)
+        delegate?.parser(self, osc: oscParam, content: oscBuffer)
     }
 
     private func dispatchDCS() {

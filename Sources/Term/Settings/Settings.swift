@@ -98,7 +98,10 @@ class Settings {
             shell = shellPath
         }
 
-        cursorBlink = defaults.bool(forKey: "cursorBlink")
+        // cursorBlink defaults to true; only override if explicitly set
+        if defaults.object(forKey: "cursorBlink") != nil {
+            cursorBlink = defaults.bool(forKey: "cursorBlink")
+        }
 
         scrollbackLines = defaults.integer(forKey: "scrollbackLines")
         if scrollbackLines == 0 { scrollbackLines = 10000 }

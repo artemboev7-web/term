@@ -271,9 +271,9 @@ public final class TerminalBuffer {
             }
         }
 
-        // Shift lines up
+        // Shift lines up (copy to avoid shared reference aliasing)
         for i in top..<(bottom - count + 1) {
-            lines[i] = lines[i + count]
+            lines[i] = lines[i + count].copy()
         }
 
         // Clear bottom lines
@@ -288,9 +288,9 @@ public final class TerminalBuffer {
         let top = scrollRegion.top
         let bottom = scrollRegion.bottom
 
-        // Shift lines down
+        // Shift lines down (copy to avoid shared reference aliasing)
         for i in stride(from: bottom, through: top + count, by: -1) {
-            lines[i] = lines[i - count]
+            lines[i] = lines[i - count].copy()
         }
 
         // Clear top lines

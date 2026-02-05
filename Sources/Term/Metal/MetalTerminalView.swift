@@ -27,6 +27,7 @@ final class MetalTerminalView: MTKView {
     private var instanceBuffers: [MTLBuffer] = []
     private var currentBufferIndex: Int = 0
     private let bufferCount = 3
+    private let inflightSemaphore = DispatchSemaphore(value: 3)
 
     // Frame timing
     private var lastFrameTime: CFTimeInterval = 0
@@ -95,12 +96,25 @@ final class MetalTerminalView: MTKView {
         logInfo("MetalTerminalView initialized with triple buffering", context: "MetalTerminalView")
     }
 
+    /// Current max instances capacity
+    private var maxInstances: Int = 0
+
     private func setupTripleBuffering() {
+        reallocateBuffers(cols: 80, rows: 50)
+    }
+
+    /// Reallocate instance buffers when terminal size exceeds current capacity
+    private func reallocateBuffers(cols: Int, rows: Int) {
         guard let device = renderer?.device else { return }
 
-        let maxInstances = 80 * 50  // 4000 cells max
+        let needed = cols * rows
+        // Only grow, never shrink (with 20% headroom)
+        guard needed > maxInstances else { return }
+        maxInstances = Int(Double(needed) * 1.2)
+
         let bufferSize = MemoryLayout<CellInstance>.stride * maxInstances
 
+        instanceBuffers.removeAll()
         for i in 0..<bufferCount {
             guard let buffer = device.makeBuffer(length: bufferSize, options: .storageModeShared) else {
                 logError("Failed to create instance buffer \(i)", context: "MetalTerminalView")
@@ -110,7 +124,7 @@ final class MetalTerminalView: MTKView {
             instanceBuffers.append(buffer)
         }
 
-        logDebug("Created \(instanceBuffers.count) instance buffers for triple buffering", context: "MetalTerminalView")
+        logDebug("Allocated \(instanceBuffers.count) instance buffers for \(maxInstances) instances", context: "MetalTerminalView")
     }
 
     private func setupDisplayLink() {
@@ -150,11 +164,14 @@ final class MetalTerminalView: MTKView {
     }
 
     private func setupCursorBlink() {
-        cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: cursorBlinkInterval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: cursorBlinkInterval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.cursorVisible.toggle()
             self.cellGrid?.cursorVisible = self.cursorVisible
         }
+        // Use .common mode so timer fires during event tracking (resize, modal)
+        RunLoop.current.add(timer, forMode: .common)
+        cursorBlinkTimer = timer
     }
 
     private func setupObservers() {
@@ -311,6 +328,9 @@ final class MetalTerminalView: MTKView {
         let rows = terminal.rows
         let cols = terminal.cols
 
+        // Ensure buffers are large enough for current terminal size
+        reallocateBuffers(cols: cols, rows: rows)
+
         // Skip if nothing changed
         if let tracker = dirtyTracker, tracker.isClean && !needsFullRedraw {
             return
@@ -332,14 +352,19 @@ final class MetalTerminalView: MTKView {
         // Build cell instances
         let instances = cellGrid.buildInstances(from: terminal, rows: rows, cols: cols)
 
+        // Wait for a free buffer slot (GPU must finish with the oldest buffer)
+        inflightSemaphore.wait()
+
         // Get next buffer for triple buffering
         let instanceBuffer = getNextInstanceBuffer()
 
         // Update GPU buffer
         updateInstanceBuffer(instanceBuffer, with: instances)
 
-        // Render with the current buffer
-        renderer.renderWithBuffer(in: self, drawable: drawable, instanceBuffer: instanceBuffer, instanceCount: instances.count)
+        // Render with the current buffer, signal semaphore on GPU completion
+        renderer.renderWithBuffer(in: self, drawable: drawable, instanceBuffer: instanceBuffer, instanceCount: instances.count) { [weak self] in
+            self?.inflightSemaphore.signal()
+        }
 
         // Reset dirty state
         needsFullRedraw = false
@@ -367,6 +392,12 @@ final class MetalTerminalView: MTKView {
     private func updateFPSCounter() {
         frameCount += 1
         let now = CACurrentMediaTime()
+
+        // Initialize on first frame to avoid FPS: 0.0 log
+        if lastFrameTime == 0 {
+            lastFrameTime = now
+            return
+        }
 
         if now - lastFrameTime >= 1.0 {
             fps = Double(frameCount) / (now - lastFrameTime)
@@ -437,11 +468,17 @@ final class MetalTerminalView: MTKView {
 
     // MARK: - Layout
 
+    private var lastTrackedRows: Int = 0
+    private var lastTrackedCols: Int = 0
+
     override func layout() {
         super.layout()
 
-        // Update dirty tracker for new size
-        if let terminal = terminal {
+        // Only recreate dirty tracker if terminal dimensions actually changed
+        if let terminal = terminal,
+           (terminal.rows != lastTrackedRows || terminal.cols != lastTrackedCols) {
+            lastTrackedRows = terminal.rows
+            lastTrackedCols = terminal.cols
             dirtyTracker = DirtyTracker(rows: terminal.rows, cols: terminal.cols)
         }
 
@@ -452,9 +489,8 @@ final class MetalTerminalView: MTKView {
         super.viewDidMoveToWindow()
 
         if window != nil {
-            // Apply current theme, font, and cursor settings
+            // Apply current theme and cursor settings (font already set during setup)
             applyTheme(Settings.shared.theme)
-            fontDidChange()
             applySettings()
 
             // Update display link for this window's display

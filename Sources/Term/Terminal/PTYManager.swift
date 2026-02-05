@@ -264,8 +264,9 @@ public final class PTYManager {
         handle.readabilityHandler = { [weak self] fileHandle in
             let data = fileHandle.availableData
             if !data.isEmpty {
-                DispatchQueue.main.async {
-                    self?.delegate?.ptyManager(self!, didReceiveData: data)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.delegate?.ptyManager(self, didReceiveData: data)
                 }
             }
         }

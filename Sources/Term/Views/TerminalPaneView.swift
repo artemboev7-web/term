@@ -36,12 +36,6 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // Cell size for font calculations
     private var cellSize: NSSize = NSSize(width: 8, height: 16)
 
-    // URL pattern for detection
-    private static let urlPattern = try? NSRegularExpression(
-        pattern: "https?://[^\\s\\)\\]\\>\"']+",
-        options: [.caseInsensitive]
-    )
-
     // MARK: - Initialization
 
     override init(frame frameRect: NSRect) {
@@ -345,8 +339,9 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         let point = convert(event.locationInWindow, from: nil)
         let (row, col) = cellPosition(at: point)
 
-        // Start selection
-        metalView?.selectionManager.startSelection(row: row, col: col)
+        // Adjust for scroll offset so selection coordinates match buffer positions
+        let adjustedRow = row - terminal.buffer.scrollOffset
+        metalView?.selectionManager.startSelection(row: adjustedRow, col: col)
         metalView?.markAllDirty()
     }
 
@@ -354,8 +349,8 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         let point = convert(event.locationInWindow, from: nil)
         let (row, col) = cellPosition(at: point)
 
-        // Update selection
-        metalView?.selectionManager.updateSelection(row: row, col: col)
+        let adjustedRow = row - terminal.buffer.scrollOffset
+        metalView?.selectionManager.updateSelection(row: adjustedRow, col: col)
         metalView?.markAllDirty()
     }
 
@@ -364,7 +359,15 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // TODO: Handle scrollback
+        let delta = Int(event.scrollingDeltaY.rounded())
+        guard delta != 0 else { return }
+
+        let buffer = terminal.buffer
+        let maxOffset = buffer.scrollback.count
+
+        // Scroll up = positive delta = increase offset
+        buffer.scrollOffset = max(0, min(buffer.scrollOffset + delta, maxOffset))
+
         metalView?.markAllDirty()
     }
 
@@ -437,7 +440,10 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // MARK: - PTYManagerDelegate
 
     func ptyManager(_ manager: PTYManager, didReceiveData data: Data) {
-        logDebug("Received \(data.count) bytes from PTY", context: "TerminalPane")
+        // Reset scroll to bottom on new output
+        if terminal.buffer.scrollOffset > 0 {
+            terminal.buffer.scrollOffset = 0
+        }
         terminal.feed(data)
     }
 

@@ -72,15 +72,43 @@ class TerminalViewController: NSViewController {
 
     func split(horizontal: Bool) {
         logInfo("Splitting \(horizontal ? "horizontally" : "vertically") in VC \(vcId)", context: "TerminalVC")
-        splitView.isVertical = !horizontal
-        let newPane = addTerminalPane()
 
-        // Равномерное распределение
-        splitView.adjustSubviews()
+        // If only 1 pane, simply set orientation and add new pane
+        if terminalPanes.count <= 1 {
+            splitView.isVertical = !horizontal
+            let newPane = addTerminalPane()
+            splitView.adjustSubviews()
+            activePaneIndex = terminalPanes.count - 1
+            newPane.focus()
+        } else {
+            // Multiple panes exist: wrap active pane + new pane in a nested NSSplitView
+            // to avoid changing orientation for all existing panes
+            let activePane = terminalPanes[activePaneIndex]
+            let activeIndex = splitView.arrangedSubviews.firstIndex(of: activePane) ?? 0
 
-        // Фокус на новую панель
-        activePaneIndex = terminalPanes.count - 1
-        newPane.focus()
+            // Create nested split view
+            let nestedSplit = NSSplitView()
+            nestedSplit.isVertical = !horizontal
+            nestedSplit.dividerStyle = .thin
+            nestedSplit.setValue(NSColor(white: 0.15, alpha: 1.0), forKey: "dividerColor")
+
+            // Replace active pane with nested split
+            activePane.removeFromSuperview()
+            splitView.insertArrangedSubview(nestedSplit, at: activeIndex)
+
+            // Add panes to nested split
+            nestedSplit.addArrangedSubview(activePane)
+
+            let newPane = TerminalPaneView()
+            newPane.delegate = self
+            terminalPanes.append(newPane)
+            nestedSplit.addArrangedSubview(newPane)
+            nestedSplit.adjustSubviews()
+
+            activePaneIndex = terminalPanes.count - 1
+            newPane.focus()
+        }
+
         logInfo("Split complete, active pane: \(activePaneIndex)", context: "TerminalVC")
     }
 
@@ -175,5 +203,11 @@ extension TerminalViewController: TerminalPaneViewDelegate {
     func pane(_ pane: TerminalPaneView, didUpdateTitle title: String) {
         logDebug("Title updated: \(title)", context: "TerminalVC")
         self.title = title
+
+        // Update the tab label so native macOS tabs show the correct title
+        if let tabVC = parent as? NSTabViewController,
+           let tabItem = tabVC.tabViewItems.first(where: { $0.viewController === self }) {
+            tabItem.label = title
+        }
     }
 }

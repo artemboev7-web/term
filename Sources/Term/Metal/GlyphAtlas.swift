@@ -226,8 +226,18 @@ final class GlyphAtlas {
         let glyphHeight = Int(ceil(cellHeight + padding * 2))
 
         // Allocate space in atlas
-        guard let rect = packer.pack(width: glyphWidth, height: glyphHeight) else {
-            logWarning("Atlas full, cannot add glyph for codepoint \(key.codepoint)", context: "GlyphAtlas")
+        var rect = packer.pack(width: glyphWidth, height: glyphHeight)
+        if rect == nil {
+            // Atlas full — evict all and rebuild ASCII cache
+            logWarning("Atlas full, evicting \(glyphCache.count) glyphs", context: "GlyphAtlas")
+            glyphCache.removeAll()
+            packer = RectanglePacker(width: size, height: size)
+            clearTexture()
+            precacheASCII()
+            rect = packer.pack(width: glyphWidth, height: glyphHeight)
+        }
+        guard let rect else {
+            logError("Cannot allocate glyph after eviction", context: "GlyphAtlas")
             return nil
         }
 

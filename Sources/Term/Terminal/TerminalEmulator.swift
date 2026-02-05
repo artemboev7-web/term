@@ -112,6 +112,7 @@ public final class TerminalEmulator: TerminalParserDelegate {
 
     /// Process input from PTY
     public func feed(_ data: Data) {
+        dispatchPrecondition(condition: .onQueue(.main))
         parser.parse(data)
         delegate?.terminalDidUpdate(self)
     }
@@ -125,6 +126,7 @@ public final class TerminalEmulator: TerminalParserDelegate {
 
     /// Resize terminal
     public func resize(cols: Int, rows: Int) {
+        dispatchPrecondition(condition: .onQueue(.main))
         screenManager.resize(cols: cols, rows: rows)
         delegate?.terminal(self, sizeChanged: cols, rows: rows)
         delegate?.terminalDidUpdate(self)
