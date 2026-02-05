@@ -48,6 +48,9 @@ class TerminalPaneView: NSView {
     private func setup() {
         logInfo("Setting up terminal pane \(paneId)", context: "TerminalPane")
 
+        // Load Metal renderer setting
+        useMetalRenderer = Settings.shared.useMetalRenderer
+
         wantsLayer = true
 
         // Setup vibrancy if enabled
@@ -118,6 +121,13 @@ class TerminalPaneView: NSView {
             self,
             selector: #selector(handleThemeChange),
             name: .themeChanged,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMetalRendererChange),
+            name: .metalRendererChanged,
             object: nil
         )
 
@@ -201,24 +211,39 @@ class TerminalPaneView: NSView {
         // Hide SwiftTerm's native rendering (it still handles input and buffer)
         terminalView.alphaValue = 0
 
-        // Setup display link for smooth animation
-        setupDisplayLink()
-
+        // MetalTerminalView manages its own CVDisplayLink for vsync
         logInfo("Metal renderer initialized for pane \(paneId)", context: "TerminalPane")
     }
 
-    private func setupDisplayLink() {
-        // Use CADisplayLink for smooth 60fps rendering
-        // For now, use a timer as fallback
-        Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.metalView?.syncFromTerminal()
+    /// Toggle between Metal and SwiftTerm rendering
+    func setMetalRendererEnabled(_ enabled: Bool) {
+        if enabled && metalView == nil {
+            useMetalRenderer = true
+            setupMetalRenderer()
+        } else if !enabled && metalView != nil {
+            metalView?.pauseRendering()
+            metalView?.removeFromSuperview()
+            metalView = nil
+            terminalView.alphaValue = 1
+            useMetalRenderer = false
+            logInfo("Switched to SwiftTerm rendering for pane \(paneId)", context: "TerminalPane")
         }
+    }
+
+    /// Check if Metal rendering is active
+    var isMetalRendererActive: Bool {
+        metalView != nil
     }
 
     @objc private func handleVibrancyChange() {
         logDebug("Vibrancy setting changed", context: "TerminalPane")
         setupVibrancy()
         updateTheme()
+    }
+
+    @objc private func handleMetalRendererChange() {
+        logDebug("Metal renderer setting changed: \(Settings.shared.useMetalRenderer)", context: "TerminalPane")
+        setMetalRendererEnabled(Settings.shared.useMetalRenderer)
     }
 
     @objc private func handleFontChange() {

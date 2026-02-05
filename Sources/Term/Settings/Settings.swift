@@ -44,6 +44,14 @@ class Settings {
 
     var scrollbackLines: Int = 10000
 
+    // MARK: - Rendering
+
+    var useMetalRenderer: Bool = true {
+        didSet {
+            NotificationCenter.default.post(name: .metalRendererChanged, object: nil)
+        }
+    }
+
     // MARK: - Available Fonts
 
     static let availableFonts: [(name: String, displayName: String)] = [
@@ -95,7 +103,12 @@ class Settings {
         scrollbackLines = defaults.integer(forKey: "scrollbackLines")
         if scrollbackLines == 0 { scrollbackLines = 10000 }
 
-        logInfo("Settings loaded: theme=\(theme.name), font=\(fontFamily) \(fontSize)pt, vibrancy=\(vibrancy), shell=\(shell)", context: "Settings")
+        // Metal renderer по умолчанию включён
+        if defaults.object(forKey: "useMetalRenderer") != nil {
+            useMetalRenderer = defaults.bool(forKey: "useMetalRenderer")
+        }
+
+        logInfo("Settings loaded: theme=\(theme.name), font=\(fontFamily) \(fontSize)pt, vibrancy=\(vibrancy), shell=\(shell), metal=\(useMetalRenderer)", context: "Settings")
     }
 
     func save() {
@@ -108,6 +121,7 @@ class Settings {
         defaults.set(shell, forKey: "shell")
         defaults.set(cursorBlink, forKey: "cursorBlink")
         defaults.set(scrollbackLines, forKey: "scrollbackLines")
+        defaults.set(useMetalRenderer, forKey: "useMetalRenderer")
         logDebug("Settings saved successfully", context: "Settings")
     }
 }
@@ -127,6 +141,7 @@ extension Notification.Name {
     static let fontChanged = Notification.Name("fontChanged")
     static let themeChanged = Notification.Name("themeChanged")
     static let vibrancyChanged = Notification.Name("vibrancyChanged")
+    static let metalRendererChanged = Notification.Name("metalRendererChanged")
 }
 
 // MARK: - Theme

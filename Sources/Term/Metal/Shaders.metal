@@ -26,12 +26,19 @@ struct Uniforms {
     float time;
     int cursorRow;
     int cursorCol;
+    uint cursorStyle;    // 0=block, 1=underline, 2=bar
+    uint cursorBlink;    // 1=blink enabled, 0=solid
     int selectionStartRow;
     int selectionStartCol;
     int selectionEndRow;
     int selectionEndCol;
     float2 padding;
 };
+
+// Cursor style constants
+constant uint CURSOR_BLOCK     = 0;
+constant uint CURSOR_UNDERLINE = 1;
+constant uint CURSOR_BAR       = 2;
 
 // Flag constants
 constant uint FLAG_UNDERLINE     = 1 << 0;
@@ -110,12 +117,29 @@ fragment float4 fragment_background(
         color = mix(color, float4(0.3, 0.4, 0.6, 1.0), 0.5);
     }
 
-    // Cursor background (block cursor)
+    // Cursor rendering
     if (in.flags & FLAG_CURSOR) {
-        // Blink animation
-        float blink = sin(uniforms.time * 3.0) * 0.5 + 0.5;
+        // Blink animation (skip if blink disabled)
+        float blink = 1.0;
+        if (uniforms.cursorBlink != 0) {
+            blink = sin(uniforms.time * 3.0) * 0.5 + 0.5;
+        }
+
         if (blink > 0.5) {
-            color = in.fgColor;  // Swap fg/bg for cursor
+            if (uniforms.cursorStyle == CURSOR_BLOCK) {
+                // Block cursor: fill entire cell
+                color = in.fgColor;
+            } else if (uniforms.cursorStyle == CURSOR_UNDERLINE) {
+                // Underline cursor: bottom 2 pixels
+                if (in.cellLocalPos.y > 0.85) {
+                    color = in.fgColor;
+                }
+            } else if (uniforms.cursorStyle == CURSOR_BAR) {
+                // Bar cursor: left 2 pixels
+                if (in.cellLocalPos.x < 0.1) {
+                    color = in.fgColor;
+                }
+            }
         }
     }
 

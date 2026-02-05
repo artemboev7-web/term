@@ -208,6 +208,14 @@ final class MetalRenderer {
         uniforms.cursorCol = Int32(col)
     }
 
+    func setCursorStyle(_ style: MetalCursorStyle) {
+        uniforms.cursorStyle = style.rawValue
+    }
+
+    func setCursorBlink(_ enabled: Bool) {
+        uniforms.cursorBlink = enabled ? 1 : 0
+    }
+
     func setSelection(startRow: Int, startCol: Int, endRow: Int, endCol: Int) {
         uniforms.selectionStartRow = Int32(startRow)
         uniforms.selectionStartCol = Int32(startCol)
@@ -292,6 +300,68 @@ final class MetalRenderer {
             encoder.setFragmentBuffer(uniformBuffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
         }
+
+        encoder.endEncoding()
+
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
+
+    /// Render with external instance buffer (for triple buffering)
+    func renderWithBuffer(in view: MTKView, drawable: CAMetalDrawable, instanceBuffer: MTLBuffer?, instanceCount: Int) {
+        guard let instanceBuffer = instanceBuffer, instanceCount > 0 else { return }
+
+        // Update time for animations
+        uniforms.time += 1.0 / 60.0
+
+        // Update viewport size
+        uniforms.viewportSize = simd_float2(
+            Float(view.drawableSize.width),
+            Float(view.drawableSize.height)
+        )
+
+        // Update uniforms buffer
+        memcpy(uniformBuffer.contents(), &uniforms, MemoryLayout<Uniforms>.stride)
+
+        // Create command buffer
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        commandBuffer.label = "Terminal Render (Triple Buffer)"
+
+        // Render pass descriptor
+        let renderPassDescriptor = MTLRenderPassDescriptor()
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        renderPassDescriptor.colorAttachments[0].clearColor = view.clearColor
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            return
+        }
+        encoder.label = "Terminal Encoder"
+
+        // Pass 1: Backgrounds
+        encoder.setRenderPipelineState(backgroundPipeline)
+        encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
+        encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
+        encoder.setFragmentBuffer(uniformBuffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
+
+        // Pass 2: Glyphs
+        if let atlasTexture = glyphAtlas.texture {
+            encoder.setRenderPipelineState(glyphPipeline)
+            encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
+            encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
+            encoder.setFragmentBuffer(uniformBuffer, offset: 0, index: 0)
+            encoder.setFragmentTexture(atlasTexture, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
+        }
+
+        // Pass 3: Decorations (underline, strikethrough)
+        encoder.setRenderPipelineState(decorationPipeline)
+        encoder.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
+        encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
+        encoder.setFragmentBuffer(uniformBuffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
 
         encoder.endEncoding()
 

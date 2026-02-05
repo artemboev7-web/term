@@ -30,6 +30,13 @@ struct CellInstance {
     static let flagSelected: UInt32      = 1 << 7
 }
 
+/// Cursor style enum (matches Settings.CursorStyle)
+enum MetalCursorStyle: UInt32 {
+    case block = 0
+    case underline = 1
+    case bar = 2
+}
+
 /// Uniform buffer for render pass
 struct Uniforms {
     var viewportSize: simd_float2     // Viewport dimensions in pixels
@@ -39,6 +46,8 @@ struct Uniforms {
     var time: Float                   // For cursor blink animation
     var cursorRow: Int32              // Cursor position
     var cursorCol: Int32
+    var cursorStyle: UInt32 = 0       // 0=block, 1=underline, 2=bar
+    var cursorBlink: UInt32 = 1       // 1=blink enabled, 0=solid
     var selectionStartRow: Int32      // Selection range
     var selectionStartCol: Int32
     var selectionEndRow: Int32

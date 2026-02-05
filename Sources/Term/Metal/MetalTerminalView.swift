@@ -1,6 +1,7 @@
 import MetalKit
 import SwiftTerm
 import AppKit
+import QuartzCore
 
 /// Metal-accelerated terminal view that renders SwiftTerm buffer
 final class MetalTerminalView: MTKView {
@@ -13,12 +14,27 @@ final class MetalTerminalView: MTKView {
     weak var terminalView: LocalProcessTerminalView?
 
     // Dirty tracking
+    private var dirtyTracker: DirtyTracker?
     private var needsFullRedraw: Bool = true
-    private var dirtyRows: Set<Int> = []
 
-    // Frame rate control
-    private var lastRenderTime: CFAbsoluteTime = 0
-    private let targetFrameTime: CFAbsoluteTime = 1.0 / 60.0  // 60 FPS
+    // Display link for vsync
+    private var displayLink: CVDisplayLink?
+    private var displayLinkRunning: Bool = false
+
+    // Triple buffering
+    private var instanceBuffers: [MTLBuffer] = []
+    private var currentBufferIndex: Int = 0
+    private let bufferCount = 3
+
+    // Frame timing
+    private var lastFrameTime: CFTimeInterval = 0
+    private var frameCount: Int = 0
+    private var fps: Double = 0
+
+    // Cursor animation
+    private var cursorBlinkTimer: Timer?
+    private var cursorVisible: Bool = true
+    private let cursorBlinkInterval: TimeInterval = 0.5
 
     // MARK: - Initialization
 
@@ -46,22 +62,98 @@ final class MetalTerminalView: MTKView {
         // MTKView configuration
         colorPixelFormat = .bgra8Unorm
         clearColor = MTLClearColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 1.0)
-        enableSetNeedsDisplay = true  // Manual refresh control
-        isPaused = true  // Don't auto-render, we control timing
-        preferredFramesPerSecond = 60
+
+        // Use display link for rendering instead of MTKView's built-in loop
+        enableSetNeedsDisplay = false
+        isPaused = true
 
         // Enable layer-backed view
         wantsLayer = true
-        layer?.isOpaque = false
+        layer?.isOpaque = true
 
-        // Subscribe to terminal updates
-        setupTerminalObserver()
+        // Initialize dirty tracker
+        if let terminal = terminalView?.getTerminal() {
+            dirtyTracker = DirtyTracker(rows: terminal.rows, cols: terminal.cols)
+        }
 
-        logInfo("MetalTerminalView initialized", context: "MetalTerminalView")
+        // Setup triple buffering
+        setupTripleBuffering()
+
+        // Setup display link
+        setupDisplayLink()
+
+        // Setup cursor blink
+        setupCursorBlink()
+
+        // Subscribe to notifications
+        setupObservers()
+
+        logInfo("MetalTerminalView initialized with triple buffering", context: "MetalTerminalView")
     }
 
-    private func setupTerminalObserver() {
-        // Listen for terminal content changes
+    private func setupTripleBuffering() {
+        guard let device = renderer?.device else { return }
+
+        let maxInstances = 80 * 50  // 4000 cells max
+        let bufferSize = MemoryLayout<CellInstance>.stride * maxInstances
+
+        for i in 0..<bufferCount {
+            guard let buffer = device.makeBuffer(length: bufferSize, options: .storageModeShared) else {
+                logError("Failed to create instance buffer \(i)", context: "MetalTerminalView")
+                continue
+            }
+            buffer.label = "Instance Buffer \(i)"
+            instanceBuffers.append(buffer)
+        }
+
+        logDebug("Created \(instanceBuffers.count) instance buffers for triple buffering", context: "MetalTerminalView")
+    }
+
+    private func setupDisplayLink() {
+        var link: CVDisplayLink?
+        CVDisplayLinkCreateWithActiveCGDisplays(&link)
+
+        guard let displayLink = link else {
+            logWarning("Failed to create CVDisplayLink, falling back to timer", context: "MetalTerminalView")
+            setupFallbackTimer()
+            return
+        }
+
+        self.displayLink = displayLink
+
+        // Set output callback
+        let callback: CVDisplayLinkOutputCallback = { displayLink, inNow, inOutputTime, flagsIn, flagsOut, context in
+            guard let context = context else { return kCVReturnSuccess }
+            let view = Unmanaged<MetalTerminalView>.fromOpaque(context).takeUnretainedValue()
+            view.displayLinkCallback()
+            return kCVReturnSuccess
+        }
+
+        CVDisplayLinkSetOutputCallback(displayLink, callback, Unmanaged.passUnretained(self).toOpaque())
+
+        // Start display link
+        CVDisplayLinkStart(displayLink)
+        displayLinkRunning = true
+
+        logDebug("CVDisplayLink started", context: "MetalTerminalView")
+    }
+
+    private func setupFallbackTimer() {
+        // Fallback to 60fps timer if display link fails
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.renderFrame()
+        }
+    }
+
+    private func setupCursorBlink() {
+        cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: cursorBlinkInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.cursorVisible.toggle()
+            self.cellGrid?.cursorVisible = self.cursorVisible
+        }
+    }
+
+    private func setupObservers() {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(terminalDidUpdate),
@@ -69,7 +161,6 @@ final class MetalTerminalView: MTKView {
             object: nil
         )
 
-        // Listen for theme changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(themeDidChange),
@@ -77,7 +168,6 @@ final class MetalTerminalView: MTKView {
             object: nil
         )
 
-        // Listen for font changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(fontDidChange),
@@ -91,10 +181,40 @@ final class MetalTerminalView: MTKView {
             name: .fontSizeChanged,
             object: nil
         )
+
+        // Window focus for cursor blink
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey),
+            name: NSWindow.didResignKeyNotification,
+            object: nil
+        )
     }
 
     deinit {
+        // Stop display link
+        if let displayLink = displayLink {
+            CVDisplayLinkStop(displayLink)
+        }
+        cursorBlinkTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
+        logDebug("MetalTerminalView deallocated", context: "MetalTerminalView")
+    }
+
+    // MARK: - Display Link Callback
+
+    private func displayLinkCallback() {
+        // Dispatch to main thread for rendering
+        DispatchQueue.main.async { [weak self] in
+            self?.renderFrame()
+        }
     }
 
     // MARK: - Configuration
@@ -102,7 +222,6 @@ final class MetalTerminalView: MTKView {
     func setFont(_ font: NSFont) {
         renderer?.setFont(font)
         needsFullRedraw = true
-        setNeedsDisplay(bounds)
     }
 
     func applyTheme(_ theme: Theme) {
@@ -117,13 +236,28 @@ final class MetalTerminalView: MTKView {
         )
 
         needsFullRedraw = true
-        setNeedsDisplay(bounds)
+    }
+
+    func applySettings() {
+        let settings = Settings.shared
+
+        // Cursor style
+        let metalStyle: MetalCursorStyle
+        switch settings.cursorStyle {
+        case .block: metalStyle = .block
+        case .underline: metalStyle = .underline
+        case .bar: metalStyle = .bar
+        }
+        renderer?.setCursorStyle(metalStyle)
+        renderer?.setCursorBlink(settings.cursorBlink)
+
+        needsFullRedraw = true
     }
 
     func setCursor(row: Int, col: Int, visible: Bool) {
         cellGrid?.cursorRow = row
         cellGrid?.cursorCol = col
-        cellGrid?.cursorVisible = visible
+        cellGrid?.cursorVisible = visible && cursorVisible
         renderer?.setCursor(row: row, col: col)
     }
 
@@ -136,11 +270,12 @@ final class MetalTerminalView: MTKView {
         } else {
             renderer?.clearSelection()
         }
+        needsFullRedraw = true
     }
 
     // MARK: - Rendering
 
-    override func draw(_ dirtyRect: NSRect) {
+    private func renderFrame() {
         guard let renderer = renderer,
               let cellGrid = cellGrid,
               let terminalView = terminalView,
@@ -148,41 +283,84 @@ final class MetalTerminalView: MTKView {
             return
         }
 
-        // Throttle rendering
-        let now = CFAbsoluteTimeGetCurrent()
-        if now - lastRenderTime < targetFrameTime && !needsFullRedraw {
-            return
-        }
-        lastRenderTime = now
+        // Update FPS counter
+        updateFPSCounter()
 
         // Get terminal state
         let terminal = terminalView.getTerminal()
         let rows = terminal.rows
         let cols = terminal.cols
 
+        // Update dirty tracker if size changed
+        if let tracker = dirtyTracker, tracker.state == .clean && !needsFullRedraw {
+            // Nothing to render
+            return
+        }
+
         // Update renderer configuration
         renderer.setGridSize(cols: cols, rows: rows)
+
+        // Sync cursor position
+        let cursorCol = terminal.buffer.x
+        let cursorRow = terminal.buffer.y
+        setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
 
         // Build cell instances
         let instances = cellGrid.buildInstances(from: terminal, rows: rows, cols: cols)
 
+        // Get next buffer for triple buffering
+        let instanceBuffer = getNextInstanceBuffer()
+
         // Update GPU buffer
-        renderer.updateInstances(instances)
+        updateInstanceBuffer(instanceBuffer, with: instances)
 
-        // Render
-        renderer.render(in: self, drawable: drawable)
+        // Render with the current buffer
+        renderer.renderWithBuffer(in: self, drawable: drawable, instanceBuffer: instanceBuffer, instanceCount: instances.count)
 
+        // Reset dirty state
         needsFullRedraw = false
-        dirtyRows.removeAll()
+        dirtyTracker?.markClean()
+    }
+
+    private func getNextInstanceBuffer() -> MTLBuffer? {
+        guard !instanceBuffers.isEmpty else { return nil }
+        let buffer = instanceBuffers[currentBufferIndex]
+        currentBufferIndex = (currentBufferIndex + 1) % bufferCount
+        return buffer
+    }
+
+    private func updateInstanceBuffer(_ buffer: MTLBuffer?, with instances: [CellInstance]) {
+        guard let buffer = buffer else { return }
+
+        let count = min(instances.count, buffer.length / MemoryLayout<CellInstance>.stride)
+        let ptr = buffer.contents().bindMemory(to: CellInstance.self, capacity: count)
+
+        for i in 0..<count {
+            ptr[i] = instances[i]
+        }
+    }
+
+    private func updateFPSCounter() {
+        frameCount += 1
+        let now = CACurrentMediaTime()
+
+        if now - lastFrameTime >= 1.0 {
+            fps = Double(frameCount) / (now - lastFrameTime)
+            frameCount = 0
+            lastFrameTime = now
+
+            // Log FPS periodically for debugging
+            if fps < 55 {
+                logDebug("FPS: \(String(format: "%.1f", fps))", context: "MetalTerminalView")
+            }
+        }
     }
 
     // MARK: - Notifications
 
     @objc private func terminalDidUpdate() {
-        // Mark as needing redraw
-        DispatchQueue.main.async { [weak self] in
-            self?.setNeedsDisplay(self?.bounds ?? .zero)
-        }
+        dirtyTracker?.markFullyDirty()
+        needsFullRedraw = true
     }
 
     @objc private func themeDidChange() {
@@ -202,16 +380,34 @@ final class MetalTerminalView: MTKView {
         }
     }
 
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        // Resume cursor blink when window is active
+        cursorBlinkTimer?.fireDate = Date()
+    }
+
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        // Show solid cursor when window is inactive
+        cursorVisible = true
+        cellGrid?.cursorVisible = true
+    }
+
     // MARK: - Dirty Tracking
 
     func markRowDirty(_ row: Int) {
-        dirtyRows.insert(row)
-        setNeedsDisplay(bounds)
+        dirtyTracker?.markDirty(row: row)
+    }
+
+    func markRowsDirty(_ range: Range<Int>) {
+        dirtyTracker?.markDirty(rows: range)
     }
 
     func markAllDirty() {
+        dirtyTracker?.markFullyDirty()
         needsFullRedraw = true
-        setNeedsDisplay(bounds)
+    }
+
+    func markScrollRegion(top: Int, bottom: Int, scrolled: Int) {
+        dirtyTracker?.markScrollRegion(top: top, bottom: bottom, scrolled: scrolled)
     }
 
     // MARK: - Layout
@@ -219,7 +415,11 @@ final class MetalTerminalView: MTKView {
     override func layout() {
         super.layout()
 
-        // Update viewport when size changes
+        // Update dirty tracker for new size
+        if let terminal = terminalView?.getTerminal() {
+            dirtyTracker = DirtyTracker(rows: terminal.rows, cols: terminal.cols)
+        }
+
         needsFullRedraw = true
     }
 
@@ -227,9 +427,36 @@ final class MetalTerminalView: MTKView {
         super.viewDidMoveToWindow()
 
         if window != nil {
-            // Apply current theme and font
+            // Apply current theme, font, and cursor settings
             applyTheme(Settings.shared.theme)
             fontDidChange()
+            applySettings()
+
+            // Update display link for this window's display
+            if let displayLink = displayLink, let screen = window?.screen {
+                let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
+                CVDisplayLinkSetCurrentCGDisplay(displayLink, displayID)
+            }
+        }
+    }
+
+    // MARK: - Public API
+
+    /// Get current FPS for debugging
+    var currentFPS: Double { fps }
+
+    /// Pause/resume rendering
+    func pauseRendering() {
+        if let displayLink = displayLink, displayLinkRunning {
+            CVDisplayLinkStop(displayLink)
+            displayLinkRunning = false
+        }
+    }
+
+    func resumeRendering() {
+        if let displayLink = displayLink, !displayLinkRunning {
+            CVDisplayLinkStart(displayLink)
+            displayLinkRunning = true
         }
     }
 }
@@ -243,10 +470,10 @@ extension MetalTerminalView {
 
         let terminal = terminalView.getTerminal()
 
-        // Sync cursor position (buffer.x = col, buffer.y = row)
+        // Sync cursor position
         let cursorCol = terminal.buffer.x
         let cursorRow = terminal.buffer.y
-        setCursor(row: cursorRow, col: cursorCol, visible: true)
+        setCursor(row: cursorRow, col: cursorCol, visible: cursorVisible)
 
         // Trigger redraw
         markAllDirty()
