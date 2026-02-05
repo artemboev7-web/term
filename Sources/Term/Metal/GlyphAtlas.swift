@@ -157,6 +157,9 @@ final class GlyphAtlas {
         // Re-cache ASCII
         precacheASCII()
 
+        // Debug: save updated atlas
+        saveAtlasToPNG(path: "/tmp/glyph_atlas_after_font.png")
+
         logInfo("Font changed: \(font.fontName) \(font.pointSize)pt", context: "GlyphAtlas")
     }
 
