@@ -12,6 +12,9 @@
 - ✅ **Themes** — Dark / Light
 - ✅ **Full Menu Bar** — все стандартные меню macOS
 - ✅ **Zoom** — ⌘+/⌘-/⌘0
+- ✅ **Search** — поиск в буфере (⌘F)
+- ✅ **URL Detection** — Cmd+click открывает URL в браузере
+- ✅ **Scrollback** — 10000 строк истории (по умолчанию SwiftTerm 500)
 
 ## Горячие клавиши
 
@@ -30,6 +33,10 @@
 | ⌘K | Очистить буфер |
 | ⌘, | Настройки |
 | ⌃⌘F | Полноэкранный режим |
+| ⌘F | Поиск в буфере |
+| ⌘G | Найти следующее |
+| ⌘⇧G | Найти предыдущее |
+| Cmd+click | Открыть URL |
 
 ## Стек
 
@@ -42,18 +49,25 @@
 ```
 term/
 ├── Package.swift
+├── Resources/
+│   └── Info.plist                  # App bundle config
+├── scripts/
+│   └── create_icon.py              # Генерация иконки (macOS)
 ├── Sources/Term/
 │   ├── App/
 │   │   ├── TermApp.swift           # Entry point + Menu setup
 │   │   └── AppDelegate.swift       # Window management
 │   ├── Windows/
-│   │   ├── TerminalWindowController.swift  # Tab management
+│   │   ├── TerminalWindowController.swift  # Tab management + Search bar
 │   │   └── PreferencesWindowController.swift
 │   ├── Views/
 │   │   ├── TerminalViewController.swift    # Split pane management
-│   │   └── TerminalPaneView.swift          # SwiftTerm wrapper
-│   └── Settings/
-│       └── Settings.swift          # UserDefaults + Themes
+│   │   ├── TerminalPaneView.swift          # SwiftTerm wrapper + Search + URL
+│   │   └── SearchBarView.swift             # Find bar UI (⌘F)
+│   ├── Settings/
+│   │   └── Settings.swift          # UserDefaults + Themes
+│   └── Utils/
+│       └── Logger.swift            # Logging utilities
 └── CLAUDE.md
 ```
 
@@ -68,19 +82,37 @@ swift run
 
 # Release сборка
 swift build -c release
+```
 
-# Собрать .app bundle (TODO)
-# swift build -c release && ...
+## Установка .app bundle
+
+```bash
+# 1. Собрать
+swift build -c release
+
+# 2. Создать структуру .app
+mkdir -p ~/Applications/Term.app/Contents/{MacOS,Resources}
+
+# 3. Копировать бинарник и Info.plist
+cp .build/release/Term ~/Applications/Term.app/Contents/MacOS/
+cp Resources/Info.plist ~/Applications/Term.app/Contents/
+
+# 4. Создать иконку (опционально)
+python3 scripts/create_icon.py
+cp /tmp/Term.icns ~/Applications/Term.app/Contents/Resources/
+
+# 5. Запустить
+open ~/Applications/Term.app
 ```
 
 ## TODO
 
-- [ ] .app bundle с Info.plist и иконкой
+- [x] ~~Поиск в буфере (⌘F)~~
+- [x] ~~URL detection и клики (Cmd+click)~~
+- [ ] .app bundle с иконкой (скрипт: `scripts/create_icon.py`)
 - [ ] Сохранение/восстановление сессий
 - [ ] Больше тем (Dracula, Solarized, Nord)
-- [ ] Поиск в буфере (⌘F)
 - [ ] Настраиваемые hotkeys
-- [ ] URL detection и клики
 - [ ] Profile support (разные настройки для разных сессий)
 
 ## SwiftTerm API
