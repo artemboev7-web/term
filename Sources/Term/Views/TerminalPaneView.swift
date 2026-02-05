@@ -88,32 +88,33 @@ class TerminalPaneView: NSView {
     }
 
     private func applyAnsiColors(_ theme: Theme) {
-        // SwiftTerm allows customizing ANSI palette
-        // This is done through the terminal's color settings
-        let colors: [NSColor] = [
-            theme.black,
-            theme.red,
-            theme.green,
-            theme.yellow,
-            theme.blue,
-            theme.magenta,
-            theme.cyan,
-            theme.white,
-            theme.brightBlack,
-            theme.brightRed,
-            theme.brightGreen,
-            theme.brightYellow,
-            theme.brightBlue,
-            theme.brightMagenta,
-            theme.brightCyan,
-            theme.brightWhite
+        // SwiftTerm uses its own Color type for ANSI palette
+        // We set colors via the terminal's installColors method
+        let terminal = terminalView.getTerminal()
+
+        // ANSI 16 colors: 0-7 normal, 8-15 bright
+        let nsColors: [NSColor] = [
+            theme.black, theme.red, theme.green, theme.yellow,
+            theme.blue, theme.magenta, theme.cyan, theme.white,
+            theme.brightBlack, theme.brightRed, theme.brightGreen, theme.brightYellow,
+            theme.brightBlue, theme.brightMagenta, theme.brightCyan, theme.brightWhite
         ]
 
-        // Set the ANSI colors on the terminal
-        for (index, color) in colors.enumerated() {
-            terminalView.installColors(
-                [color.usingColorSpace(.deviceRGB) ?? color]
-            )
+        // Convert NSColor to SwiftTerm Color and install
+        var colors: [Color] = []
+        for nsColor in nsColors {
+            if let rgb = nsColor.usingColorSpace(.deviceRGB) {
+                let color = Color(
+                    red: UInt16(rgb.redComponent * 65535),
+                    green: UInt16(rgb.greenComponent * 65535),
+                    blue: UInt16(rgb.blueComponent * 65535)
+                )
+                colors.append(color)
+            }
+        }
+
+        if colors.count == 16 {
+            terminal.installPalette(colors: colors)
         }
     }
 
@@ -204,7 +205,7 @@ class TerminalPaneView: NSView {
 // MARK: - LocalProcessTerminalViewDelegate
 
 extension TerminalPaneView: LocalProcessTerminalViewDelegate {
-    func processTerminated(_ source: TerminalView, exitCode: Int32?) {
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.paneDidClose(self)
