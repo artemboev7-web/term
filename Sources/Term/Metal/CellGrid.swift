@@ -141,6 +141,22 @@ final class CellGrid {
         buildCount += 1
         if buildCount <= 3 {
             logDebug("buildInstances[\(buildCount)]: \(instances.count) instances from \(linesProcessed)/\(rows) lines", context: "CellGrid")
+
+            // Debug: print first line content
+            if let firstLine = terminal.getLine(row: 0) {
+                var chars = ""
+                for c in 0..<min(cols, 40) {
+                    let cp = firstLine[c].codepoint
+                    if cp >= 32 && cp < 127 {
+                        chars += String(UnicodeScalar(cp)!)
+                    } else if cp == 0 {
+                        chars += "."
+                    } else {
+                        chars += "?"
+                    }
+                }
+                logDebug("Row0: '\(chars)'", context: "CellGrid")
+            }
         }
 
         return instances
@@ -198,9 +214,11 @@ final class CellGrid {
             position: simd_float2(Float(col), Float(row)),
             uvOffset: glyphInfo?.uvOffset ?? .zero,
             uvSize: glyphInfo?.uvSize ?? .zero,
+            _padding0: .zero,
             fgColor: fgColor,
             bgColor: bgColor,
-            flags: flags
+            flags: flags,
+            _padding1: 0
         )
     }
 

@@ -381,12 +381,15 @@ final class GlyphAtlas {
 
     /// Save glyph atlas texture to PNG for debugging
     func saveAtlasToPNG(path: String = "/tmp/glyph_atlas.png") {
+        logDebug("Saving atlas to PNG: \(path)", context: "GlyphAtlas")
+
         guard let texture = texture else {
             logError("No texture to save", context: "GlyphAtlas")
             return
         }
 
         // Read texture data
+        logDebug("Reading texture data \(texture.width)x\(texture.height)", context: "GlyphAtlas")
         let bytesPerRow = size
         var data = [UInt8](repeating: 0, count: size * size)
         texture.getBytes(

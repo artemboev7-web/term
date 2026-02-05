@@ -10,14 +10,17 @@ struct CellVertex {
 }
 
 /// Per-instance data for instanced rendering
+/// IMPORTANT: Layout must match Metal struct exactly!
+/// Total size: 72 bytes (position 8 + uvOffset 8 + uvSize 8 + _padding0 8 + fgColor 16 + bgColor 16 + flags 4 + _padding1 4)
 struct CellInstance {
-    var position: simd_float2    // Cell position in grid coordinates
-    var uvOffset: simd_float2    // UV offset in atlas (top-left)
-    var uvSize: simd_float2      // UV size in atlas
-    var fgColor: simd_float4     // Foreground color (text)
-    var bgColor: simd_float4     // Background color
-    var flags: UInt32            // Bit flags: underline, bold, italic, strikethrough, cursor
-    var padding: UInt32 = 0      // Alignment padding
+    var position: simd_float2    // offset 0:  Cell position in grid coordinates
+    var uvOffset: simd_float2    // offset 8:  UV offset in atlas (top-left)
+    var uvSize: simd_float2      // offset 16: UV size in atlas
+    var _padding0: simd_float2 = .zero  // offset 24: REQUIRED for float4 alignment (16-byte)
+    var fgColor: simd_float4     // offset 32: Foreground color (text)
+    var bgColor: simd_float4     // offset 48: Background color
+    var flags: UInt32            // offset 64: Bit flags
+    var _padding1: UInt32 = 0    // offset 68: Alignment padding
 
     // Flag bits
     static let flagUnderline: UInt32     = 1 << 0
