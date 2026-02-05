@@ -64,6 +64,8 @@ class Settings {
     private let defaults = UserDefaults.standard
 
     func load() {
+        logInfo("Loading settings from UserDefaults", context: "Settings")
+
         fontSize = defaults.integer(forKey: "fontSize")
         if fontSize == 0 { fontSize = 14 }
 
@@ -92,9 +94,12 @@ class Settings {
 
         scrollbackLines = defaults.integer(forKey: "scrollbackLines")
         if scrollbackLines == 0 { scrollbackLines = 10000 }
+
+        logInfo("Settings loaded: theme=\(theme.name), font=\(fontFamily) \(fontSize)pt, vibrancy=\(vibrancy), shell=\(shell)", context: "Settings")
     }
 
     func save() {
+        logInfo("Saving settings to UserDefaults", context: "Settings")
         defaults.set(fontSize, forKey: "fontSize")
         defaults.set(fontFamily, forKey: "fontFamily")
         defaults.set(theme.name, forKey: "theme")
@@ -103,6 +108,7 @@ class Settings {
         defaults.set(shell, forKey: "shell")
         defaults.set(cursorBlink, forKey: "cursorBlink")
         defaults.set(scrollbackLines, forKey: "scrollbackLines")
+        logDebug("Settings saved successfully", context: "Settings")
     }
 }
 

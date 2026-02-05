@@ -5,8 +5,10 @@ class TerminalViewController: NSViewController {
     private var splitView: NSSplitView!
     private var terminalPanes: [TerminalPaneView] = []
     private var activePaneIndex = 0
+    private let vcId = UUID().uuidString.prefix(8)
 
     override func loadView() {
+        logInfo("Loading TerminalViewController \(vcId)", context: "TerminalVC")
         // Container view with padding for v0-style border
         let container = NSView()
         container.wantsLayer = true
@@ -32,7 +34,9 @@ class TerminalViewController: NSViewController {
         view = container
 
         // Создаём первую панель
+        logDebug("Creating first terminal pane", context: "TerminalVC")
         addTerminalPane()
+        logInfo("TerminalViewController \(vcId) loaded with 1 pane", context: "TerminalVC")
 
         // Подписка на изменение настроек
         NotificationCenter.default.addObserver(
@@ -51,20 +55,24 @@ class TerminalViewController: NSViewController {
     }
 
     deinit {
+        logInfo("TerminalViewController \(vcId) deallocated", context: "TerminalVC")
         NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Pane Management
 
     private func addTerminalPane() -> TerminalPaneView {
+        logDebug("Adding terminal pane to VC \(vcId)", context: "TerminalVC")
         let pane = TerminalPaneView()
         pane.delegate = self
         terminalPanes.append(pane)
         splitView.addArrangedSubview(pane)
+        logDebug("Terminal pane added, total panes: \(terminalPanes.count)", context: "TerminalVC")
         return pane
     }
 
     func split(horizontal: Bool) {
+        logInfo("Splitting \(horizontal ? "horizontally" : "vertically") in VC \(vcId)", context: "TerminalVC")
         splitView.isVertical = !horizontal
         let newPane = addTerminalPane()
 
@@ -74,10 +82,15 @@ class TerminalViewController: NSViewController {
         // Фокус на новую панель
         activePaneIndex = terminalPanes.count - 1
         newPane.focus()
+        logInfo("Split complete, active pane: \(activePaneIndex)", context: "TerminalVC")
     }
 
     func closePane(at index: Int) {
-        guard terminalPanes.count > 1 else { return }
+        logInfo("Closing pane \(index) in VC \(vcId)", context: "TerminalVC")
+        guard terminalPanes.count > 1 else {
+            logDebug("Cannot close last pane", context: "TerminalVC")
+            return
+        }
 
         let pane = terminalPanes.remove(at: index)
         pane.removeFromSuperview()
@@ -87,6 +100,7 @@ class TerminalViewController: NSViewController {
         }
 
         terminalPanes[safe: activePaneIndex]?.focus()
+        logDebug("Pane closed, remaining: \(terminalPanes.count), active: \(activePaneIndex)", context: "TerminalVC")
     }
 
     // MARK: - Actions
@@ -120,17 +134,20 @@ class TerminalViewController: NSViewController {
 extension TerminalViewController: TerminalPaneViewDelegate {
     func paneDidBecomeActive(_ pane: TerminalPaneView) {
         if let index = terminalPanes.firstIndex(where: { $0 === pane }) {
+            logDebug("Pane \(index) became active in VC \(vcId)", context: "TerminalVC")
             activePaneIndex = index
         }
     }
 
     func paneDidClose(_ pane: TerminalPaneView) {
+        logInfo("Pane requested close in VC \(vcId)", context: "TerminalVC")
         if let index = terminalPanes.firstIndex(where: { $0 === pane }) {
             closePane(at: index)
         }
     }
 
     func pane(_ pane: TerminalPaneView, didUpdateTitle title: String) {
+        logDebug("Title updated: \(title)", context: "TerminalVC")
         self.title = title
     }
 }

@@ -21,7 +21,8 @@ let package = Package(
                 "Windows/PreferencesWindowController.swift",
                 "Views/TerminalViewController.swift",
                 "Views/TerminalPaneView.swift",
-                "Settings/Settings.swift"
+                "Settings/Settings.swift",
+                "Utils/Logger.swift"
             ]
         )
     ]

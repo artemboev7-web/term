@@ -4,6 +4,7 @@ import SwiftTerm
 class TerminalWindowController: NSWindowController, NSWindowDelegate {
     private var tabViewController: NSTabViewController!
     private var tabCount = 0
+    private let windowId = UUID().uuidString.prefix(8)
 
     convenience init() {
         let window = NSWindow(
@@ -15,9 +16,11 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
 
         self.init(window: window)
 
+        logInfo("Creating window \(windowId)", context: "Window")
         setupWindow()
         setupTabViewController()
         addNewTab()
+        logInfo("Window \(windowId) ready", context: "Window")
     }
 
     private func setupWindow() {
@@ -77,6 +80,8 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
 
     func addNewTab() {
         tabCount += 1
+        logInfo("Adding tab #\(tabCount) to window \(windowId)", context: "Window")
+
         let terminalVC = TerminalViewController()
         terminalVC.title = "zsh"
 
@@ -87,10 +92,14 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         tabViewController.selectedTabViewItemIndex = tabViewController.tabViewItems.count - 1
 
         updateWindowTitle()
+        logDebug("Tab added, total tabs: \(tabViewController.tabViewItems.count)", context: "Window")
     }
 
     func closeCurrentTab() {
+        logInfo("Closing tab in window \(windowId)", context: "Window")
+
         guard tabViewController.tabViewItems.count > 0 else {
+            logDebug("No tabs left, closing window", context: "Window")
             window?.close()
             return
         }
@@ -98,9 +107,11 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         let index = tabViewController.selectedTabViewItemIndex
         if index >= 0 && index < tabViewController.tabViewItems.count {
             tabViewController.removeTabViewItem(tabViewController.tabViewItems[index])
+            logDebug("Tab \(index) removed, remaining: \(tabViewController.tabViewItems.count)", context: "Window")
         }
 
         if tabViewController.tabViewItems.isEmpty {
+            logDebug("All tabs closed, closing window", context: "Window")
             window?.close()
         } else {
             updateWindowTitle()
@@ -126,7 +137,10 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Split Panes
 
     func splitCurrentPane(horizontal: Bool) {
+        logInfo("Split \(horizontal ? "horizontal" : "vertical") in window \(windowId)", context: "Window")
+
         guard let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController else {
+            logWarning("No current view controller for split", context: "Window")
             return
         }
         currentVC.split(horizontal: horizontal)
@@ -152,16 +166,23 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        logInfo("Window \(windowId) closing", context: "Window")
         if let appDelegate = NSApp.delegate as? AppDelegate {
             appDelegate.windowWillClose(self)
         }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        logDebug("Window \(windowId) became key", context: "Window")
         // Focus terminal when window becomes key
         if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
             currentVC.focusTerminal()
         }
+    }
+
+    deinit {
+        logInfo("Window \(windowId) deallocated", context: "Window")
+        NotificationCenter.default.removeObserver(self)
     }
 }
 

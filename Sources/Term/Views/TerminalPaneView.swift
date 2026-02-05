@@ -13,6 +13,7 @@ class TerminalPaneView: NSView {
     private var terminalView: LocalProcessTerminalView!
     private var vibrancyView: NSVisualEffectView?
     private var isActive = false
+    private let paneId = UUID().uuidString.prefix(8)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -25,6 +26,8 @@ class TerminalPaneView: NSView {
     }
 
     private func setup() {
+        logInfo("Setting up terminal pane \(paneId)", context: "TerminalPane")
+
         wantsLayer = true
 
         // Setup vibrancy if enabled
@@ -38,6 +41,7 @@ class TerminalPaneView: NSView {
         layer?.borderColor = Settings.shared.theme.border.cgColor
 
         // Создаём терминал
+        logDebug("Creating LocalProcessTerminalView", context: "TerminalPane")
         terminalView = LocalProcessTerminalView(frame: bounds)
         terminalView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -68,9 +72,33 @@ class TerminalPaneView: NSView {
             name: .vibrancyChanged,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleFontChange),
+            name: .fontSizeChanged,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleFontChange),
+            name: .fontChanged,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThemeChange),
+            name: .themeChanged,
+            object: nil
+        )
+
+        logInfo("Terminal pane \(paneId) setup complete", context: "TerminalPane")
     }
 
     deinit {
+        logInfo("Terminal pane \(paneId) deallocated", context: "TerminalPane")
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -82,15 +110,18 @@ class TerminalPaneView: NSView {
         vibrancyView = nil
 
         guard Settings.shared.vibrancy else {
+            logDebug("Vibrancy disabled", context: "TerminalPane")
             layer?.backgroundColor = Settings.shared.theme.background.cgColor
             return
         }
+
+        logDebug("Setting up vibrancy effect", context: "TerminalPane")
 
         // Create vibrancy view
         let visualEffect = NSVisualEffectView(frame: bounds)
         visualEffect.translatesAutoresizingMaskIntoConstraints = false
         visualEffect.blendingMode = .behindWindow
-        visualEffect.material = .hudWindow  // Dark blur
+        visualEffect.material = .hudWindow
         visualEffect.state = .active
         visualEffect.wantsLayer = true
 
@@ -111,7 +142,18 @@ class TerminalPaneView: NSView {
     }
 
     @objc private func handleVibrancyChange() {
+        logDebug("Vibrancy setting changed", context: "TerminalPane")
         setupVibrancy()
+        updateTheme()
+    }
+
+    @objc private func handleFontChange() {
+        logDebug("Font changed: \(Settings.shared.fontFamily) \(Settings.shared.fontSize)pt", context: "TerminalPane")
+        applyFont()
+    }
+
+    @objc private func handleThemeChange() {
+        logDebug("Theme changed: \(Settings.shared.theme.name)", context: "TerminalPane")
         updateTheme()
     }
 
@@ -119,12 +161,13 @@ class TerminalPaneView: NSView {
         let settings = Settings.shared
         let theme = settings.theme
 
+        logDebug("Applying settings: theme=\(theme.name), vibrancy=\(settings.vibrancy)", context: "TerminalPane")
+
         // Font
         applyFont()
 
         // v0 style colors
         if settings.vibrancy {
-            // Semi-transparent for vibrancy
             terminalView.nativeBackgroundColor = theme.background.withAlphaComponent(0.6)
         } else {
             terminalView.nativeBackgroundColor = theme.background
@@ -143,10 +186,13 @@ class TerminalPaneView: NSView {
 
         // Try custom font first
         if let font = NSFont(name: settings.fontFamily, size: size) {
+            logDebug("Using font: \(settings.fontFamily)", context: "TerminalPane")
             terminalView.font = font
         } else if let font = NSFont(name: "SF Mono", size: size) {
+            logWarning("Font '\(settings.fontFamily)' not found, falling back to SF Mono", context: "TerminalPane")
             terminalView.font = font
         } else {
+            logWarning("Falling back to system monospace font", context: "TerminalPane")
             terminalView.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         }
     }
@@ -175,11 +221,16 @@ class TerminalPaneView: NSView {
 
         if colors.count == 16 {
             terminal.installPalette(colors: colors)
+            logDebug("ANSI palette installed", context: "TerminalPane")
+        } else {
+            logError("Failed to create ANSI palette: got \(colors.count) colors", context: "TerminalPane")
         }
     }
 
     private func startShell() {
         let shell = Settings.shared.shell
+        logInfo("Starting shell: \(shell)", context: "TerminalPane")
+
         let environment = ProcessInfo.processInfo.environment
 
         var env: [String] = []
@@ -192,31 +243,37 @@ class TerminalPaneView: NSView {
         env.append("CLICOLOR=1")
         env.append("CLICOLOR_FORCE=1")
 
+        logDebug("Environment prepared, starting process...", context: "TerminalPane")
+
         terminalView.startProcess(
             executable: shell,
             args: [shell, "-l"],
             environment: env,
             execName: (shell as NSString).lastPathComponent
         )
+
+        logInfo("Shell process started", context: "TerminalPane")
     }
 
     // MARK: - Public Methods
 
     func focus() {
+        logDebug("Pane \(paneId) focused", context: "TerminalPane")
         isActive = true
         window?.makeFirstResponder(terminalView)
         delegate?.paneDidBecomeActive(self)
 
-        // v0 style: subtle highlight on active pane
         layer?.borderColor = Settings.shared.theme.cursor.withAlphaComponent(0.3).cgColor
     }
 
     func blur() {
+        logDebug("Pane \(paneId) blurred", context: "TerminalPane")
         isActive = false
         layer?.borderColor = Settings.shared.theme.border.cgColor
     }
 
     func clear() {
+        logDebug("Clearing buffer", context: "TerminalPane")
         terminalView.send(txt: "\u{0C}")
     }
 
@@ -261,6 +318,7 @@ class TerminalPaneView: NSView {
 
 extension TerminalPaneView: LocalProcessTerminalViewDelegate {
     func processTerminated(source: TerminalView, exitCode: Int32?) {
+        logInfo("Shell process terminated with exit code: \(exitCode ?? -1)", context: "TerminalPane")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.paneDidClose(self)
@@ -268,14 +326,17 @@ extension TerminalPaneView: LocalProcessTerminalViewDelegate {
     }
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        // Size changed
+        logDebug("Terminal size changed: \(newCols)x\(newRows)", context: "TerminalPane")
     }
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        logDebug("Terminal title changed: \(title)", context: "TerminalPane")
         delegate?.pane(self, didUpdateTitle: title)
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        // Directory changed
+        if let dir = directory {
+            logDebug("Current directory: \(dir)", context: "TerminalPane")
+        }
     }
 }
