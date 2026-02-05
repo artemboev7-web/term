@@ -156,15 +156,34 @@ final class MetalRenderer {
     }
 
     private func loadShaderSource() throws -> String {
-        // Load from bundle or compile from file
-        let shaderPath = Bundle.main.path(forResource: "Shaders", ofType: "metal")
-            ?? "/root/Projects/term/Sources/Term/Metal/Shaders.metal"
-
-        if FileManager.default.fileExists(atPath: shaderPath) {
-            return try String(contentsOfFile: shaderPath, encoding: .utf8)
+        // Try bundle resource first (for packaged app)
+        if let bundlePath = Bundle.main.path(forResource: "Shaders", ofType: "metal") {
+            return try String(contentsOfFile: bundlePath, encoding: .utf8)
         }
 
-        // Fallback: embedded shader source for development
+        // Try bundle resourceURL (for Swift PM resources)
+        if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("Shaders.metal"),
+           FileManager.default.fileExists(atPath: resourceURL.path) {
+            return try String(contentsOfFile: resourceURL.path, encoding: .utf8)
+        }
+
+        // Development fallback paths
+        let fallbackPaths = [
+            // Mac development
+            NSString("~/Projects/term/Sources/Term/Metal/Shaders.metal").expandingTildeInPath,
+            // Linux VM
+            "/root/Projects/term/Sources/Term/Metal/Shaders.metal",
+            // Relative to executable
+            "./Sources/Term/Metal/Shaders.metal"
+        ]
+
+        for path in fallbackPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                logDebug("Loading shaders from: \(path)", context: "MetalRenderer")
+                return try String(contentsOfFile: path, encoding: .utf8)
+            }
+        }
+
         throw MetalError.shaderNotFound("Shaders.metal")
     }
 

@@ -24,14 +24,16 @@ let package = Package(
                 "Views/SearchBarView.swift",
                 "Settings/Settings.swift",
                 "Utils/Logger.swift",
-                // Metal renderer
+                // Metal renderer (Shaders.metal загружается runtime)
                 "Metal/ShaderTypes.swift",
-                "Metal/Shaders.metal",
                 "Metal/MetalRenderer.swift",
                 "Metal/GlyphAtlas.swift",
                 "Metal/CellGrid.swift",
                 "Metal/MetalTerminalView.swift",
                 "Metal/DirtyTracking.swift"
+            ],
+            resources: [
+                .copy("Metal/Shaders.metal")
             ]
         )
     ]
