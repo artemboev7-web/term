@@ -77,12 +77,17 @@ final class CellGrid {
 
     // MARK: - Building Instances
 
+    // Debug: track build calls
+    private var buildCount: Int = 0
+
     func buildInstances(from terminal: TerminalEmulator, rows: Int, cols: Int) -> [CellInstance] {
         instances.removeAll(keepingCapacity: true)
         instances.reserveCapacity(rows * cols)
 
+        var linesProcessed = 0
         for row in 0..<rows {
             guard let line = terminal.getLine(row: row) else { continue }
+            linesProcessed += 1
 
             var col = 0
             while col < cols {
@@ -97,6 +102,12 @@ final class CellGrid {
                     col += 1
                 }
             }
+        }
+
+        // Log first few builds for debugging
+        buildCount += 1
+        if buildCount <= 3 {
+            logDebug("buildInstances[\(buildCount)]: \(instances.count) instances from \(linesProcessed)/\(rows) lines", context: "CellGrid")
         }
 
         return instances

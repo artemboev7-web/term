@@ -297,7 +297,10 @@ final class MetalTerminalView: MTKView {
             return
         }
         guard let drawable = currentDrawable else {
-            // This is normal when view is not visible
+            // Log only occasionally to avoid spam
+            if frameCount % 60 == 0 {
+                logDebug("renderFrame: no drawable (view may not be visible)", context: "MetalTerminalView")
+            }
             return
         }
 
@@ -311,6 +314,11 @@ final class MetalTerminalView: MTKView {
         // Skip if nothing changed
         if let tracker = dirtyTracker, tracker.isClean && !needsFullRedraw {
             return
+        }
+
+        // Log first render
+        if frameCount == 1 {
+            logInfo("First render: \(cols)x\(rows), viewport: \(drawableSize)", context: "MetalTerminalView")
         }
 
         // Update renderer configuration
@@ -454,6 +462,11 @@ final class MetalTerminalView: MTKView {
                 let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
                 CVDisplayLinkSetCurrentCGDisplay(displayLink, displayID)
             }
+
+            // Force initial render when added to window
+            needsFullRedraw = true
+            setNeedsDisplay(bounds)
+            logDebug("View added to window, forcing initial render", context: "MetalTerminalView")
         }
     }
 

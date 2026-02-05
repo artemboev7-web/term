@@ -60,7 +60,16 @@ final class GlyphAtlas {
             mipmapped: false
         )
         descriptor.usage = [.shaderRead, .shaderWrite]
+
+        // Use .shared on Apple Silicon (unified memory), .managed on Intel
+        // .shared is simpler and doesn't require synchronize()
+        #if arch(arm64)
+        descriptor.storageMode = .shared
+        let storageDesc = "shared"
+        #else
         descriptor.storageMode = .managed
+        let storageDesc = "managed"
+        #endif
 
         texture = device.makeTexture(descriptor: descriptor)
         texture?.label = "Glyph Atlas"
@@ -68,7 +77,7 @@ final class GlyphAtlas {
         // Clear texture to black (transparent)
         clearTexture()
 
-        logDebug("Atlas texture created", context: "GlyphAtlas")
+        logDebug("Atlas texture created (storageMode: \(storageDesc))", context: "GlyphAtlas")
     }
 
     private func clearTexture() {
@@ -301,6 +310,32 @@ final class GlyphAtlas {
             withBytes: glyphData,
             bytesPerRow: width
         )
+
+        // Synchronize managed texture for GPU access (required on macOS with .managed storage)
+        needsSynchronize = true
+    }
+
+    // MARK: - GPU Synchronization
+
+    /// Flag indicating texture needs GPU sync
+    private(set) var needsSynchronize: Bool = false
+
+    /// Synchronize texture to GPU (call before rendering)
+    /// Only needed on Intel Macs with .managed storage mode
+    func synchronizeIfNeeded(commandBuffer: MTLCommandBuffer) {
+        #if arch(arm64)
+        // Apple Silicon uses .shared storage - no sync needed
+        needsSynchronize = false
+        return
+        #else
+        guard needsSynchronize, let texture = texture else { return }
+
+        if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+            blitEncoder.synchronize(resource: texture)
+            blitEncoder.endEncoding()
+        }
+        needsSynchronize = false
+        #endif
     }
 
     // MARK: - Helpers

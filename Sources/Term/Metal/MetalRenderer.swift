@@ -346,6 +346,9 @@ final class MetalRenderer {
         guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
         commandBuffer.label = "Terminal Render (Triple Buffer)"
 
+        // Synchronize glyph atlas texture if needed (macOS .managed storage)
+        glyphAtlas.synchronizeIfNeeded(commandBuffer: commandBuffer)
+
         // Render pass descriptor
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture
