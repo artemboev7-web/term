@@ -7,6 +7,13 @@ protocol TerminalPaneViewDelegate: AnyObject {
     func pane(_ pane: TerminalPaneView, didUpdateTitle title: String)
 }
 
+// Custom search match result
+struct SearchMatch {
+    let row: Int
+    let column: Int
+    let length: Int
+}
+
 class TerminalPaneView: NSView {
     weak var delegate: TerminalPaneViewDelegate?
 
@@ -16,7 +23,7 @@ class TerminalPaneView: NSView {
     private let paneId = UUID().uuidString.prefix(8)
 
     // Search state
-    private var searchMatches: [SearchResult] = []
+    private var searchMatches: [SearchMatch] = []
     private var currentMatchIndex: Int = 0
     private var currentSearchQuery: String = ""
 
@@ -324,8 +331,26 @@ class TerminalPaneView: NSView {
             return (0, 0)
         }
 
+        // Search through visible terminal buffer
+        searchMatches = []
         let terminal = terminalView.getTerminal()
-        searchMatches = terminal.search(for: query, direction: .forward, wrapAround: true)
+        let queryLower = query.lowercased()
+
+        // Search visible rows + scrollback (estimate ~1000 lines max)
+        let maxSearchRows = 1000
+        for row in -maxSearchRows..<terminal.rows {
+            if let line = terminal.getLine(row: row) {
+                let lineText = line.translateToString()
+                let lineTextLower = lineText.lowercased()
+
+                var searchStart = lineTextLower.startIndex
+                while let range = lineTextLower.range(of: queryLower, range: searchStart..<lineTextLower.endIndex) {
+                    let col = lineTextLower.distance(from: lineTextLower.startIndex, to: range.lowerBound)
+                    searchMatches.append(SearchMatch(row: row, column: col, length: query.count))
+                    searchStart = range.upperBound
+                }
+            }
+        }
 
         if searchMatches.isEmpty {
             currentMatchIndex = 0
@@ -365,9 +390,16 @@ class TerminalPaneView: NSView {
         currentSearchQuery = ""
     }
 
-    private func scrollToMatch(_ match: SearchResult) {
+    private func scrollToMatch(_ match: SearchMatch) {
         let terminal = terminalView.getTerminal()
-        terminal.scroll(toLine: match.startLocation.row)
+
+        // Use terminal's scroll method if match is in scrollback
+        if match.row < 0 {
+            // Scroll up to show the row (negative rows are scrollback)
+            terminal.scroll(isWrapped: false)
+        }
+        // Force redraw
+        terminalView.setNeedsDisplay(terminalView.bounds)
     }
 
     // MARK: - URL Detection
@@ -376,18 +408,25 @@ class TerminalPaneView: NSView {
         let terminal = terminalView.getTerminal()
         let localPoint = terminalView.convert(point, from: self)
 
-        // Get character position from point
-        guard let (col, row) = terminalView.getPosition(forPoint: localPoint) else {
+        // Calculate cell size from font
+        let font = terminalView.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let fontAttributes = [NSAttributedString.Key.font: font]
+        let charSize = NSString("W").size(withAttributes: fontAttributes)
+
+        guard charSize.width > 0, charSize.height > 0 else { return nil }
+
+        let col = Int(localPoint.x / charSize.width)
+        // Y is flipped in macOS coordinates
+        let row = Int((terminalView.frame.height - localPoint.y) / charSize.height)
+
+        // Clamp to valid range
+        guard col >= 0, col < terminal.cols, row >= 0, row < terminal.rows else {
             return nil
         }
 
         // Get the line content
-        guard row >= 0, row < terminal.rows else {
-            return nil
-        }
-
         let line = terminal.getLine(row: row)
-        let lineText = line?.getString() ?? ""
+        let lineText = line?.translateToString() ?? ""
 
         // Find URLs in the line
         guard let urlPattern = Self.urlPattern else { return nil }
