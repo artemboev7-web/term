@@ -410,9 +410,65 @@ struct Theme {
         brightWhite: NSColor(red: 0.76, green: 0.80, blue: 0.85, alpha: 1.0)
     )
 
+    // MARK: - Monokai Pro
+
+    static let monokai = Theme(
+        name: "Monokai",
+        background: NSColor(red: 0.16, green: 0.16, blue: 0.15, alpha: 1.0),  // #2d2a2e
+        foreground: NSColor(red: 0.99, green: 0.97, blue: 0.95, alpha: 1.0),  // #fcfcfa
+        cursor: NSColor(red: 1.0, green: 0.84, blue: 0.26, alpha: 1.0),       // #ffd866
+        cursorText: NSColor(red: 0.16, green: 0.16, blue: 0.15, alpha: 1.0),
+        selection: NSColor(red: 0.27, green: 0.27, blue: 0.26, alpha: 0.8),   // #403e41
+        border: NSColor(red: 0.22, green: 0.22, blue: 0.21, alpha: 1.0),
+        black: NSColor(red: 0.16, green: 0.16, blue: 0.15, alpha: 1.0),       // #2d2a2e
+        red: NSColor(red: 1.0, green: 0.38, blue: 0.42, alpha: 1.0),          // #ff6188
+        green: NSColor(red: 0.66, green: 0.89, blue: 0.34, alpha: 1.0),       // #a9dc76
+        yellow: NSColor(red: 1.0, green: 0.84, blue: 0.26, alpha: 1.0),       // #ffd866
+        blue: NSColor(red: 0.47, green: 0.77, blue: 0.99, alpha: 1.0),        // #78dce8
+        magenta: NSColor(red: 0.67, green: 0.51, blue: 1.0, alpha: 1.0),      // #ab9df2
+        cyan: NSColor(red: 0.47, green: 0.77, blue: 0.99, alpha: 1.0),        // #78dce8
+        white: NSColor(red: 0.99, green: 0.97, blue: 0.95, alpha: 1.0),       // #fcfcfa
+        brightBlack: NSColor(red: 0.45, green: 0.44, blue: 0.45, alpha: 1.0), // #727072
+        brightRed: NSColor(red: 1.0, green: 0.38, blue: 0.42, alpha: 1.0),
+        brightGreen: NSColor(red: 0.66, green: 0.89, blue: 0.34, alpha: 1.0),
+        brightYellow: NSColor(red: 1.0, green: 0.84, blue: 0.26, alpha: 1.0),
+        brightBlue: NSColor(red: 0.47, green: 0.77, blue: 0.99, alpha: 1.0),
+        brightMagenta: NSColor(red: 0.67, green: 0.51, blue: 1.0, alpha: 1.0),
+        brightCyan: NSColor(red: 0.47, green: 0.77, blue: 0.99, alpha: 1.0),
+        brightWhite: NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
+    )
+
+    // MARK: - Rosé Pine
+
+    static let rosePine = Theme(
+        name: "Rosé Pine",
+        background: NSColor(red: 0.10, green: 0.09, blue: 0.13, alpha: 1.0),  // #191724
+        foreground: NSColor(red: 0.88, green: 0.85, blue: 0.91, alpha: 1.0),  // #e0def4
+        cursor: NSColor(red: 0.92, green: 0.74, blue: 0.73, alpha: 1.0),      // #ebbcba
+        cursorText: NSColor(red: 0.10, green: 0.09, blue: 0.13, alpha: 1.0),
+        selection: NSColor(red: 0.24, green: 0.21, blue: 0.34, alpha: 0.8),   // #403d52
+        border: NSColor(red: 0.15, green: 0.14, blue: 0.20, alpha: 1.0),
+        black: NSColor(red: 0.15, green: 0.14, blue: 0.20, alpha: 1.0),       // #26233a
+        red: NSColor(red: 0.92, green: 0.55, blue: 0.58, alpha: 1.0),         // #eb6f92
+        green: NSColor(red: 0.62, green: 0.80, blue: 0.63, alpha: 1.0),       // #9ccfd8 (pine)
+        yellow: NSColor(red: 0.95, green: 0.76, blue: 0.55, alpha: 1.0),      // #f6c177
+        blue: NSColor(red: 0.62, green: 0.53, blue: 0.78, alpha: 1.0),        // #c4a7e7 (iris)
+        magenta: NSColor(red: 0.77, green: 0.65, blue: 0.82, alpha: 1.0),     // #c4a7e7
+        cyan: NSColor(red: 0.61, green: 0.81, blue: 0.85, alpha: 1.0),        // #9ccfd8
+        white: NSColor(red: 0.88, green: 0.85, blue: 0.91, alpha: 1.0),       // #e0def4
+        brightBlack: NSColor(red: 0.43, green: 0.40, blue: 0.52, alpha: 1.0), // #6e6a86
+        brightRed: NSColor(red: 0.92, green: 0.55, blue: 0.58, alpha: 1.0),
+        brightGreen: NSColor(red: 0.62, green: 0.80, blue: 0.63, alpha: 1.0),
+        brightYellow: NSColor(red: 0.95, green: 0.76, blue: 0.55, alpha: 1.0),
+        brightBlue: NSColor(red: 0.62, green: 0.53, blue: 0.78, alpha: 1.0),
+        brightMagenta: NSColor(red: 0.77, green: 0.65, blue: 0.82, alpha: 1.0),
+        brightCyan: NSColor(red: 0.61, green: 0.81, blue: 0.85, alpha: 1.0),
+        brightWhite: NSColor(red: 0.88, green: 0.85, blue: 0.91, alpha: 1.0)
+    )
+
     static let allThemes: [Theme] = [
         .v0Dark, .v0Midnight, .dracula, .nord, .catppuccin,
-        .tokyoNight, .gruvbox, .oneDark, .solarizedDark
+        .tokyoNight, .gruvbox, .oneDark, .solarizedDark, .monokai, .rosePine
     ]
 
     static func named(_ name: String) -> Theme? {
