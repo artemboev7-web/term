@@ -110,7 +110,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // MARK: - Setup
 
     private func setupVibrancy() {
-        if Settings.shared.vibrancyEnabled {
+        if Settings.shared.vibrancy {
             logDebug("Vibrancy enabled", context: "TerminalPane")
             let vibrancy = NSVisualEffectView(frame: bounds)
             vibrancy.blendingMode = .behindWindow
@@ -268,7 +268,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // MARK: - Notifications
 
     @objc private func vibrancyChanged() {
-        let enabled = Settings.shared.vibrancyEnabled
+        let enabled = Settings.shared.vibrancy
 
         if enabled && vibrancyView == nil {
             setupVibrancy()

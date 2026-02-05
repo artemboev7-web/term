@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 // MARK: - PTY Delegate
 
@@ -12,21 +13,18 @@ public protocol PTYManagerDelegate: AnyObject {
 
 // MARK: - PTY Manager
 
-/// Manages pseudo-terminal and child process
+/// Manages pseudo-terminal and child process using Foundation Process
 public final class PTYManager {
     public weak var delegate: PTYManagerDelegate?
 
     /// Master file descriptor
     private var masterFD: Int32 = -1
 
-    /// Slave file descriptor
-    private var slaveFD: Int32 = -1
+    /// File handle for reading from master
+    private var masterReadHandle: FileHandle?
 
-    /// Child process PID
-    private var childPID: pid_t = 0
-
-    /// Read source for dispatch
-    private var readSource: DispatchSourceRead?
+    /// Child process
+    private var process: Process?
 
     /// Is running
     public private(set) var isRunning: Bool = false
@@ -42,7 +40,7 @@ public final class PTYManager {
     private let workingDirectory: String?
 
     /// Environment variables
-    private let environment: [String: String]
+    private var environment: [String: String]
 
     // MARK: - Initialization
 
@@ -54,7 +52,7 @@ public final class PTYManager {
         self.shell = shell
         self.workingDirectory = workingDirectory
 
-        // Build environment
+        // Build default environment
         var env: [String: String] = [:]
 
         // Copy current environment
@@ -62,17 +60,17 @@ public final class PTYManager {
             env[key] = value
         }
 
+        // Override with provided environment
+        if let provided = environment {
+            for (key, value) in provided {
+                env[key] = value
+            }
+        }
+
         // Set terminal type
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
-
-        // Override with custom environment
-        if let custom = environment {
-            for (key, value) in custom {
-                env[key] = value
-            }
-        }
 
         self.environment = env
     }
@@ -81,87 +79,68 @@ public final class PTYManager {
         stop()
     }
 
-    // MARK: - Lifecycle
+    // MARK: - Start/Stop
 
-    /// Start the PTY and shell process
     public func start() -> Bool {
         guard !isRunning else { return true }
 
-        // Open PTY
-        guard openPTY() else {
-            logError("Failed to open PTY", context: "PTY")
+        // Create PTY pair using posix_openpt
+        guard createPTY() else {
             return false
         }
 
-        // Fork and exec
-        guard forkAndExec() else {
-            logError("Failed to fork", context: "PTY")
+        // Start shell process
+        guard startProcess() else {
             closePTY()
             return false
         }
 
-        // Setup read handler
-        setupReadHandler()
+        // Start reading from master
+        startReading()
 
         isRunning = true
-        logInfo("PTY started: shell=\(shell), pid=\(childPID)", context: "PTY")
         return true
     }
 
-    /// Stop the PTY and kill process
     public func stop() {
         guard isRunning else { return }
-
-        // Cancel read source
-        readSource?.cancel()
-        readSource = nil
-
-        // Kill child process
-        if childPID > 0 {
-            kill(childPID, SIGTERM)
-            var status: Int32 = 0
-            waitpid(childPID, &status, 0)
-            childPID = 0
-        }
-
-        // Close PTY
-        closePTY()
-
         isRunning = false
-        logInfo("PTY stopped", context: "PTY")
+
+        // Terminate process
+        if let process = process, process.isRunning {
+            process.terminate()
+        }
+        process = nil
+
+        // Close master
+        closePTY()
     }
 
     // MARK: - I/O
 
-    /// Write data to PTY
     public func write(_ data: Data) {
-        guard isRunning && masterFD >= 0 else { return }
+        guard masterFD >= 0, !data.isEmpty else { return }
 
-        data.withUnsafeBytes { ptr in
-            guard let bytes = ptr.baseAddress else { return }
-            _ = Darwin.write(masterFD, bytes, data.count)
+        data.withUnsafeBytes { buffer in
+            if let ptr = buffer.baseAddress {
+                _ = Darwin.write(masterFD, ptr, data.count)
+            }
         }
     }
 
-    /// Write string to PTY
     public func write(_ string: String) {
-        write(Data(string.utf8))
-    }
-
-    /// Send special key
-    public func sendKey(_ key: TerminalKey, modifiers: TerminalModifiers = []) {
-        let data = key.escapeSequence(modifiers: modifiers, applicationCursor: false)
-        write(data)
+        if let data = string.data(using: .utf8) {
+            write(data)
+        }
     }
 
     // MARK: - Resize
 
-    /// Resize the PTY
     public func resize(cols: Int, rows: Int) {
-        guard masterFD >= 0 else { return }
-
         self.cols = cols
         self.rows = rows
+
+        guard masterFD >= 0 else { return }
 
         var size = winsize()
         size.ws_col = UInt16(cols)
@@ -170,265 +149,236 @@ public final class PTYManager {
         size.ws_ypixel = 0
 
         _ = ioctl(masterFD, TIOCSWINSZ, &size)
-        logDebug("PTY resized: \(cols)x\(rows)", context: "PTY")
     }
 
-    // MARK: - Private Methods
+    // MARK: - PTY Creation
 
-    private func openPTY() -> Bool {
-        // Open master
+    private func createPTY() -> Bool {
+        // Open master pseudo-terminal
         masterFD = posix_openpt(O_RDWR | O_NOCTTY)
-        guard masterFD >= 0 else { return false }
-
-        // Grant and unlock
-        guard grantpt(masterFD) == 0, unlockpt(masterFD) == 0 else {
-            close(masterFD)
-            masterFD = -1
+        guard masterFD >= 0 else {
             return false
         }
 
-        // Get slave name
-        guard let slaveName = ptsname(masterFD) else {
-            close(masterFD)
-            masterFD = -1
+        // Grant access to slave
+        guard grantpt(masterFD) == 0 else {
+            closePTY()
             return false
         }
 
-        // Open slave
-        slaveFD = open(slaveName, O_RDWR | O_NOCTTY)
-        guard slaveFD >= 0 else {
-            close(masterFD)
-            masterFD = -1
+        // Unlock slave
+        guard unlockpt(masterFD) == 0 else {
+            closePTY()
             return false
         }
 
         // Set initial size
-        resize(cols: cols, rows: rows)
+        var size = winsize()
+        size.ws_col = UInt16(cols)
+        size.ws_row = UInt16(rows)
+        _ = ioctl(masterFD, TIOCSWINSZ, &size)
 
         return true
     }
 
     private func closePTY() {
-        if slaveFD >= 0 {
-            close(slaveFD)
-            slaveFD = -1
-        }
+        masterReadHandle = nil
+
         if masterFD >= 0 {
             close(masterFD)
             masterFD = -1
         }
     }
 
-    private func forkAndExec() -> Bool {
-        childPID = fork()
+    // MARK: - Process
 
-        if childPID < 0 {
-            // Fork failed
+    private func startProcess() -> Bool {
+        // Get slave device path
+        guard let slavePath = ptsname(masterFD).map({ String(cString: $0) }) else {
             return false
         }
 
-        if childPID == 0 {
-            // Child process
-            setupChildProcess()
-            // If we get here, exec failed
-            exit(1)
+        // Open slave for process
+        let slaveFD = open(slavePath, O_RDWR)
+        guard slaveFD >= 0 else {
+            return false
         }
 
-        // Parent process
-        // Close slave in parent
-        close(slaveFD)
-        slaveFD = -1
+        // Create file handles for slave
+        let slaveHandle = FileHandle(fileDescriptor: slaveFD, closeOnDealloc: true)
 
-        return true
-    }
+        // Create process
+        let proc = Process()
 
-    private func setupChildProcess() {
-        // Create new session
-        setsid()
+        // Set executable
+        proc.executableURL = URL(fileURLWithPath: shell)
 
-        // Set controlling terminal
-        _ = ioctl(slaveFD, TIOCSCTTY, 0)
-
-        // Redirect standard streams
-        dup2(slaveFD, STDIN_FILENO)
-        dup2(slaveFD, STDOUT_FILENO)
-        dup2(slaveFD, STDERR_FILENO)
-
-        // Close extra FDs
-        if slaveFD > STDERR_FILENO {
-            close(slaveFD)
-        }
-        close(masterFD)
-
-        // Change directory
-        if let dir = workingDirectory {
-            chdir(dir)
-        } else if let home = environment["HOME"] {
-            chdir(home)
-        }
-
-        // Build environment array
-        var envp: [UnsafeMutablePointer<CChar>?] = []
-        var envStrings: [String] = []
-
-        for (key, value) in environment {
-            envStrings.append("\(key)=\(value)")
-        }
-
-        for str in envStrings {
-            envp.append(strdup(str))
-        }
-        envp.append(nil)
-
-        // Build arguments
+        // Login shell argument
         let shellName = (shell as NSString).lastPathComponent
-        let argv: [UnsafeMutablePointer<CChar>?] = [
-            strdup("-\(shellName)"),  // Login shell
-            nil
-        ]
+        proc.arguments = ["-l"]  // Login shell
 
-        // Execute
-        execve(shell, argv, envp)
-
-        // If we get here, exec failed
-        perror("execve")
-        _exit(127)
-    }
-
-    private func setupReadHandler() {
-        guard masterFD >= 0 else { return }
-
-        let source = DispatchSource.makeReadSource(fileDescriptor: masterFD, queue: .main)
-
-        source.setEventHandler { [weak self] in
-            self?.handleReadEvent()
+        // Set working directory
+        if let dir = workingDirectory {
+            proc.currentDirectoryURL = URL(fileURLWithPath: dir)
+        } else if let home = environment["HOME"] {
+            proc.currentDirectoryURL = URL(fileURLWithPath: home)
         }
 
-        source.setCancelHandler { [weak self] in
-            self?.handleCancel()
-        }
+        // Set environment
+        proc.environment = environment
 
-        source.resume()
-        readSource = source
-    }
+        // Connect to PTY slave
+        proc.standardInput = slaveHandle
+        proc.standardOutput = slaveHandle
+        proc.standardError = slaveHandle
 
-    private func handleReadEvent() {
-        guard masterFD >= 0 else { return }
-
-        var buffer = [UInt8](repeating: 0, count: 8192)
-        let bytesRead = read(masterFD, &buffer, buffer.count)
-
-        if bytesRead > 0 {
-            let data = Data(buffer[0..<bytesRead])
-            delegate?.ptyManager(self, didReceiveData: data)
-        } else if bytesRead < 0 && errno != EAGAIN && errno != EINTR {
-            // Error or EOF
-            handleProcessTermination()
-        }
-    }
-
-    private func handleCancel() {
-        logDebug("Read source cancelled", context: "PTY")
-    }
-
-    private func handleProcessTermination() {
-        var status: Int32 = 0
-        let result = waitpid(childPID, &status, WNOHANG)
-
-        if result > 0 {
-            let exitCode: Int32
-            if WIFEXITED(status) {
-                exitCode = WEXITSTATUS(status)
-            } else if WIFSIGNALED(status) {
-                exitCode = Int32(128 + WTERMSIG(status))
-            } else {
-                exitCode = -1
+        // Set up termination handler
+        proc.terminationHandler = { [weak self] process in
+            DispatchQueue.main.async {
+                self?.handleProcessTermination(exitCode: process.terminationStatus)
             }
+        }
 
-            isRunning = false
-            delegate?.ptyManager(self, processTerminated: exitCode)
+        // Start process
+        do {
+            try proc.run()
+            self.process = proc
+            return true
+        } catch {
+            close(slaveFD)
+            return false
+        }
+    }
+
+    private func handleProcessTermination(exitCode: Int32) {
+        isRunning = false
+        delegate?.ptyManager(self, processTerminated: exitCode)
+    }
+
+    // MARK: - Reading
+
+    private func startReading() {
+        let handle = FileHandle(fileDescriptor: masterFD, closeOnDealloc: false)
+        masterReadHandle = handle
+
+        // Read in background
+        handle.readabilityHandler = { [weak self] fileHandle in
+            let data = fileHandle.availableData
+            if !data.isEmpty {
+                DispatchQueue.main.async {
+                    self?.delegate?.ptyManager(self!, didReceiveData: data)
+                }
+            }
         }
     }
 }
 
-// MARK: - Terminal Keys
+// MARK: - Terminal Key Encoding
 
 /// Terminal key codes
 public enum TerminalKey {
-    case enter
-    case tab
-    case backspace
-    case escape
-    case delete
-
+    case char(Character)
     case up, down, left, right
     case home, end
     case pageUp, pageDown
-    case insert
-
+    case insert, delete
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
-
-    /// Get escape sequence for key
-    func escapeSequence(modifiers: TerminalModifiers, applicationCursor: Bool) -> Data {
-        let mod = modifiers.isEmpty ? "" : "1;\(modifiers.csiModifier)"
-
-        let sequence: String
-        switch self {
-        case .enter: sequence = "\r"
-        case .tab: sequence = modifiers.contains(.shift) ? "\u{1B}[Z" : "\t"
-        case .backspace: sequence = "\u{7F}"
-        case .escape: sequence = "\u{1B}"
-        case .delete: sequence = "\u{1B}[3~"
-
-        case .up:    sequence = applicationCursor ? "\u{1B}OA" : "\u{1B}[\(mod)A"
-        case .down:  sequence = applicationCursor ? "\u{1B}OB" : "\u{1B}[\(mod)B"
-        case .right: sequence = applicationCursor ? "\u{1B}OC" : "\u{1B}[\(mod)C"
-        case .left:  sequence = applicationCursor ? "\u{1B}OD" : "\u{1B}[\(mod)D"
-
-        case .home:   sequence = "\u{1B}[\(mod)H"
-        case .end:    sequence = "\u{1B}[\(mod)F"
-        case .pageUp: sequence = "\u{1B}[5\(mod.isEmpty ? "" : ";\(mod)")~"
-        case .pageDown: sequence = "\u{1B}[6\(mod.isEmpty ? "" : ";\(mod)")~"
-        case .insert: sequence = "\u{1B}[2~"
-
-        case .f1:  sequence = "\u{1B}OP"
-        case .f2:  sequence = "\u{1B}OQ"
-        case .f3:  sequence = "\u{1B}OR"
-        case .f4:  sequence = "\u{1B}OS"
-        case .f5:  sequence = "\u{1B}[15~"
-        case .f6:  sequence = "\u{1B}[17~"
-        case .f7:  sequence = "\u{1B}[18~"
-        case .f8:  sequence = "\u{1B}[19~"
-        case .f9:  sequence = "\u{1B}[20~"
-        case .f10: sequence = "\u{1B}[21~"
-        case .f11: sequence = "\u{1B}[23~"
-        case .f12: sequence = "\u{1B}[24~"
-        }
-
-        return Data(sequence.utf8)
-    }
+    case tab, backspace, enter, escape
 }
 
-/// Terminal modifiers
+/// Modifier flags
 public struct TerminalModifiers: OptionSet {
-    public let rawValue: UInt8
+    public let rawValue: UInt
 
-    public init(rawValue: UInt8) {
+    public init(rawValue: UInt) {
         self.rawValue = rawValue
     }
 
     public static let shift   = TerminalModifiers(rawValue: 1 << 0)
-    public static let alt     = TerminalModifiers(rawValue: 1 << 1)
-    public static let control = TerminalModifiers(rawValue: 1 << 2)
+    public static let control = TerminalModifiers(rawValue: 1 << 1)
+    public static let alt     = TerminalModifiers(rawValue: 1 << 2)
     public static let meta    = TerminalModifiers(rawValue: 1 << 3)
+}
 
-    /// CSI modifier parameter
-    var csiModifier: Int {
-        var m = 1
-        if contains(.shift)   { m += 1 }
-        if contains(.alt)     { m += 2 }
-        if contains(.control) { m += 4 }
-        if contains(.meta)    { m += 8 }
-        return m
+extension PTYManager {
+    /// Send a key press with modifiers
+    public func sendKey(_ key: TerminalKey, modifiers: TerminalModifiers = []) {
+        let sequence = encodeKey(key, modifiers: modifiers)
+        write(sequence)
+    }
+
+    private func encodeKey(_ key: TerminalKey, modifiers: TerminalModifiers) -> String {
+        switch key {
+        case .char(let ch):
+            if modifiers.contains(.control) {
+                // Control character
+                let scalar = ch.unicodeScalars.first!
+                if scalar.value >= 0x40 && scalar.value < 0x80 {
+                    let ctrl = Character(UnicodeScalar(scalar.value & 0x1F)!)
+                    if modifiers.contains(.alt) {
+                        return "\u{1B}\(ctrl)"
+                    }
+                    return String(ctrl)
+                }
+            }
+            if modifiers.contains(.alt) {
+                return "\u{1B}\(ch)"
+            }
+            return String(ch)
+
+        case .up:
+            return modifiers.isEmpty ? "\u{1B}[A" : "\u{1B}[1;\(modifierCode(modifiers))A"
+        case .down:
+            return modifiers.isEmpty ? "\u{1B}[B" : "\u{1B}[1;\(modifierCode(modifiers))B"
+        case .right:
+            return modifiers.isEmpty ? "\u{1B}[C" : "\u{1B}[1;\(modifierCode(modifiers))C"
+        case .left:
+            return modifiers.isEmpty ? "\u{1B}[D" : "\u{1B}[1;\(modifierCode(modifiers))D"
+
+        case .home:
+            return modifiers.isEmpty ? "\u{1B}[H" : "\u{1B}[1;\(modifierCode(modifiers))H"
+        case .end:
+            return modifiers.isEmpty ? "\u{1B}[F" : "\u{1B}[1;\(modifierCode(modifiers))F"
+
+        case .pageUp:
+            return modifiers.isEmpty ? "\u{1B}[5~" : "\u{1B}[5;\(modifierCode(modifiers))~"
+        case .pageDown:
+            return modifiers.isEmpty ? "\u{1B}[6~" : "\u{1B}[6;\(modifierCode(modifiers))~"
+
+        case .insert:
+            return "\u{1B}[2~"
+        case .delete:
+            return modifiers.isEmpty ? "\u{1B}[3~" : "\u{1B}[3;\(modifierCode(modifiers))~"
+
+        case .f1:  return modifiers.isEmpty ? "\u{1B}OP" : "\u{1B}[1;\(modifierCode(modifiers))P"
+        case .f2:  return modifiers.isEmpty ? "\u{1B}OQ" : "\u{1B}[1;\(modifierCode(modifiers))Q"
+        case .f3:  return modifiers.isEmpty ? "\u{1B}OR" : "\u{1B}[1;\(modifierCode(modifiers))R"
+        case .f4:  return modifiers.isEmpty ? "\u{1B}OS" : "\u{1B}[1;\(modifierCode(modifiers))S"
+        case .f5:  return "\u{1B}[15~"
+        case .f6:  return "\u{1B}[17~"
+        case .f7:  return "\u{1B}[18~"
+        case .f8:  return "\u{1B}[19~"
+        case .f9:  return "\u{1B}[20~"
+        case .f10: return "\u{1B}[21~"
+        case .f11: return "\u{1B}[23~"
+        case .f12: return "\u{1B}[24~"
+
+        case .tab:
+            return modifiers.contains(.shift) ? "\u{1B}[Z" : "\t"
+        case .backspace:
+            return modifiers.contains(.alt) ? "\u{1B}\u{7F}" : "\u{7F}"
+        case .enter:
+            return "\r"
+        case .escape:
+            return "\u{1B}"
+        }
+    }
+
+    private func modifierCode(_ modifiers: TerminalModifiers) -> Int {
+        var code = 1
+        if modifiers.contains(.shift) { code += 1 }
+        if modifiers.contains(.alt) { code += 2 }
+        if modifiers.contains(.control) { code += 4 }
+        return code
     }
 }
