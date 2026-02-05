@@ -106,6 +106,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Find
+
+    @objc func showFind() {
+        logDebug("Menu: Find", context: "AppDelegate")
+        if let controller = NSApp.keyWindow?.windowController as? TerminalWindowController {
+            controller.showFindBar()
+        }
+    }
+
+    @objc func findNext() {
+        if let controller = NSApp.keyWindow?.windowController as? TerminalWindowController {
+            controller.findNext()
+        }
+    }
+
+    @objc func findPrevious() {
+        if let controller = NSApp.keyWindow?.windowController as? TerminalWindowController {
+            controller.findPrevious()
+        }
+    }
+
     // MARK: - View
 
     @objc func zoomIn() {

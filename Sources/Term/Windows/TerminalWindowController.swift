@@ -5,6 +5,8 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     private var tabViewController: NSTabViewController!
     private var tabCount = 0
     private let windowId = UUID().uuidString.prefix(8)
+    private var searchBar: SearchBarView?
+    private var searchBarConstraint: NSLayoutConstraint?
 
     convenience init() {
         let window = NSWindow(
@@ -163,6 +165,76 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Search
+
+    func showFindBar() {
+        guard searchBar == nil else {
+            searchBar?.focus()
+            return
+        }
+
+        guard let contentView = window?.contentView else { return }
+
+        logInfo("Showing find bar in window \(windowId)", context: "Window")
+
+        let bar = SearchBarView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.delegate = self
+        contentView.addSubview(bar)
+
+        let heightConstraint = bar.heightAnchor.constraint(equalToConstant: 36)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: contentView.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            heightConstraint
+        ])
+
+        searchBar = bar
+        searchBarConstraint = heightConstraint
+
+        // Animate in
+        bar.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            bar.animator().alphaValue = 1
+        }
+
+        bar.focus()
+    }
+
+    func hideFindBar() {
+        guard let bar = searchBar else { return }
+
+        logDebug("Hiding find bar", context: "Window")
+
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            bar.animator().alphaValue = 0
+        }, completionHandler: {
+            bar.removeFromSuperview()
+            self.searchBar = nil
+            self.searchBarConstraint = nil
+
+            // Return focus to terminal
+            if let currentVC = self.tabViewController.tabViewItems[safe: self.tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+                currentVC.focusTerminal()
+            }
+        })
+    }
+
+    func findNext() {
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            currentVC.findNext()
+        }
+    }
+
+    func findPrevious() {
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            currentVC.findPrevious()
+        }
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
@@ -183,6 +255,38 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     deinit {
         logInfo("Window \(windowId) deallocated", context: "Window")
         NotificationCenter.default.removeObserver(self)
+    }
+}
+
+// MARK: - SearchBarDelegate
+
+extension TerminalWindowController: SearchBarDelegate {
+    func searchBar(_ searchBar: SearchBarView, didSearchFor query: String) {
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            let (count, current) = currentVC.search(for: query)
+            searchBar.updateResults(count: count, current: current)
+        }
+    }
+
+    func searchBarDidRequestNext(_ searchBar: SearchBarView) {
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            let (count, current) = currentVC.findNext()
+            searchBar.updateResults(count: count, current: current)
+        }
+    }
+
+    func searchBarDidRequestPrevious(_ searchBar: SearchBarView) {
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            let (count, current) = currentVC.findPrevious()
+            searchBar.updateResults(count: count, current: current)
+        }
+    }
+
+    func searchBarDidClose(_ searchBar: SearchBarView) {
+        hideFindBar()
+        if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
+            currentVC.clearSearch()
+        }
     }
 }
 

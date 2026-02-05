@@ -100,6 +100,21 @@ terminal.nativeForegroundColor = .white
 terminal.caretColor = .cyan
 ```
 
+## MCP Servers
+
+### Глобальные (см. `~/.claude/CLAUDE.md`)
+- `mcp__docs-mcp__*` — поиск по документации (:9100)
+- `mcp__memory__*` — персистентная память (:9101)
+- `mcp__brave-search__*` — веб-поиск Brave (:9102)
+- `mcp__sequential-thinking__*` — сложные рассуждения (:9103)
+- `mcp__ast-grep__*` — AST поиск по коду (:9104)
+- `mcp__browser-agent__*` — браузерная автоматизация (:9105)
+- `mcp__vm-monitor__*` — мониторинг VM (:9106)
+- `mcp__context7__*` — документация библиотек (:9107)
+- `mcp__claude-context__*` — семантический поиск по коду (:9108)
+- `mcp__lsp__*` — Language Server Protocol (:9109)
+- `mcp__exa__*` — AI-powered веб-поиск Exa (:9111)
+
 ## Ссылки
 
 - [SwiftTerm GitHub](https://github.com/migueldeicaza/SwiftTerm)

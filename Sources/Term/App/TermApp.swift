@@ -58,6 +58,10 @@ struct TermApp {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "Find...", action: #selector(AppDelegate.showFind), keyEquivalent: "f")
+        editMenu.addItem(withTitle: "Find Next", action: #selector(AppDelegate.findNext), keyEquivalent: "g")
+        editMenu.addItem(withTitle: "Find Previous", action: #selector(AppDelegate.findPrevious), keyEquivalent: "g").keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(withTitle: "Clear Buffer", action: #selector(AppDelegate.clearBuffer), keyEquivalent: "k")
 
         // View menu

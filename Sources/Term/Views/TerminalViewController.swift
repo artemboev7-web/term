@@ -113,6 +113,33 @@ class TerminalViewController: NSViewController {
         terminalPanes[safe: activePaneIndex]?.focus()
     }
 
+    // MARK: - Search
+
+    func search(for query: String) -> (count: Int, current: Int) {
+        guard let pane = terminalPanes[safe: activePaneIndex] else {
+            return (0, 0)
+        }
+        return pane.search(for: query)
+    }
+
+    func findNext() -> (count: Int, current: Int) {
+        guard let pane = terminalPanes[safe: activePaneIndex] else {
+            return (0, 0)
+        }
+        return pane.findNext()
+    }
+
+    func findPrevious() -> (count: Int, current: Int) {
+        guard let pane = terminalPanes[safe: activePaneIndex] else {
+            return (0, 0)
+        }
+        return pane.findPrevious()
+    }
+
+    func clearSearch() {
+        terminalPanes[safe: activePaneIndex]?.clearSearch()
+    }
+
     // MARK: - Settings
 
     @objc private func handleFontChange() {

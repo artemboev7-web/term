@@ -15,6 +15,17 @@ class TerminalPaneView: NSView {
     private var isActive = false
     private let paneId = UUID().uuidString.prefix(8)
 
+    // Search state
+    private var searchMatches: [SearchResult] = []
+    private var currentMatchIndex: Int = 0
+    private var currentSearchQuery: String = ""
+
+    // URL pattern for detection
+    private static let urlPattern = try? NSRegularExpression(
+        pattern: "https?://[^\\s\\)\\]\\>\"']+",
+        options: [.caseInsensitive]
+    )
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
@@ -302,9 +313,115 @@ class TerminalPaneView: NSView {
         applyAnsiColors(theme)
     }
 
+    // MARK: - Search
+
+    func search(for query: String) -> (count: Int, current: Int) {
+        currentSearchQuery = query
+
+        guard !query.isEmpty else {
+            searchMatches = []
+            currentMatchIndex = 0
+            return (0, 0)
+        }
+
+        let terminal = terminalView.getTerminal()
+        searchMatches = terminal.search(for: query, direction: .forward, wrapAround: true)
+
+        if searchMatches.isEmpty {
+            currentMatchIndex = 0
+            logDebug("Search '\(query)': no matches", context: "TerminalPane")
+        } else {
+            currentMatchIndex = 0
+            scrollToMatch(searchMatches[currentMatchIndex])
+            logDebug("Search '\(query)': \(searchMatches.count) matches", context: "TerminalPane")
+        }
+
+        return (searchMatches.count, currentMatchIndex)
+    }
+
+    func findNext() -> (count: Int, current: Int) {
+        guard !searchMatches.isEmpty else {
+            return (0, 0)
+        }
+
+        currentMatchIndex = (currentMatchIndex + 1) % searchMatches.count
+        scrollToMatch(searchMatches[currentMatchIndex])
+        return (searchMatches.count, currentMatchIndex)
+    }
+
+    func findPrevious() -> (count: Int, current: Int) {
+        guard !searchMatches.isEmpty else {
+            return (0, 0)
+        }
+
+        currentMatchIndex = (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
+        scrollToMatch(searchMatches[currentMatchIndex])
+        return (searchMatches.count, currentMatchIndex)
+    }
+
+    func clearSearch() {
+        searchMatches = []
+        currentMatchIndex = 0
+        currentSearchQuery = ""
+    }
+
+    private func scrollToMatch(_ match: SearchResult) {
+        let terminal = terminalView.getTerminal()
+        terminal.scroll(toLine: match.startLocation.row)
+    }
+
+    // MARK: - URL Detection
+
+    private func detectURLAtPoint(_ point: NSPoint) -> URL? {
+        let terminal = terminalView.getTerminal()
+        let localPoint = terminalView.convert(point, from: self)
+
+        // Get character position from point
+        guard let (col, row) = terminalView.getPosition(forPoint: localPoint) else {
+            return nil
+        }
+
+        // Get the line content
+        guard row >= 0, row < terminal.rows else {
+            return nil
+        }
+
+        let line = terminal.getLine(row: row)
+        let lineText = line?.getString() ?? ""
+
+        // Find URLs in the line
+        guard let urlPattern = Self.urlPattern else { return nil }
+        let range = NSRange(lineText.startIndex..., in: lineText)
+        let matches = urlPattern.matches(in: lineText, options: [], range: range)
+
+        // Check if click is on a URL
+        for match in matches {
+            guard let urlRange = Range(match.range, in: lineText) else { continue }
+            let startCol = lineText.distance(from: lineText.startIndex, to: urlRange.lowerBound)
+            let endCol = lineText.distance(from: lineText.startIndex, to: urlRange.upperBound)
+
+            if col >= startCol && col < endCol {
+                let urlString = String(lineText[urlRange])
+                return URL(string: urlString)
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Mouse Events
 
     override func mouseDown(with event: NSEvent) {
+        // Cmd+click = open URL
+        if event.modifierFlags.contains(.command) {
+            let point = convert(event.locationInWindow, from: nil)
+            if let url = detectURLAtPoint(point) {
+                logInfo("Opening URL: \(url)", context: "TerminalPane")
+                NSWorkspace.shared.open(url)
+                return
+            }
+        }
+
         super.mouseDown(with: event)
         focus()
     }
