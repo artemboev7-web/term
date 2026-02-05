@@ -63,6 +63,10 @@ class TerminalPaneView: NSView {
         terminalView = LocalProcessTerminalView(frame: bounds)
         terminalView.translatesAutoresizingMaskIntoConstraints = false
 
+        // Увеличиваем scrollback buffer до 10000 строк (по умолчанию 500)
+        terminalView.getTerminal().options.scrollback = 10000
+        logDebug("Scrollback buffer set to 10000 lines", context: "TerminalPane")
+
         addSubview(terminalView)
 
         // Constraints with small padding
