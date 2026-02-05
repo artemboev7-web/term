@@ -1,0 +1,30 @@
+# Xcode
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Build artifacts
+*.app
+*.dSYM
+*.ipa
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
