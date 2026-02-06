@@ -55,7 +55,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newWindow() {
         logDebug("Menu: New Window", context: "AppDelegate")
-        _ = createNewWindow()
+        if Settings.shared.remoteMode, let project = currentProject, let sessionId = currentSessionId {
+            createRemoteWindow(project: project, sessionId: sessionId)
+        } else {
+            _ = createNewWindow()
+        }
     }
 
     @objc func newTab() {
