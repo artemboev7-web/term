@@ -27,6 +27,9 @@ let package = Package(
                 "Terminal/TerminalEmulator.swift",
                 "Terminal/PTYManager.swift",
                 "Terminal/InputHandler.swift",
+                // Network (data source abstraction)
+                "Network/TerminalDataSource.swift",
+                "Network/LocalDataSource.swift",
                 // Metal renderer
                 "Metal/ShaderTypes.swift",
                 "Metal/MetalRenderer.swift",
