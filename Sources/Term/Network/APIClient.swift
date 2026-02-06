@@ -56,18 +56,26 @@ final class APIClient {
 
     // MARK: - HTTP Helpers
 
-    private func get(_ path: String) async throws -> Data {
+    private func get(_ path: String, retried: Bool = false) async throws -> Data {
         let url = URL(string: "\(baseURL)\(path)")!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         addAuthHeaders(&request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
+
+        // Auto-refresh token on 401
+        if let http = response as? HTTPURLResponse, http.statusCode == 401, !retried {
+            if try await refreshAndRetry() {
+                return try await get(path, retried: true)
+            }
+        }
+
         try validateResponse(response, data: data)
         return data
     }
 
-    private func post(_ path: String, body: [String: Any]) async throws -> Data {
+    private func post(_ path: String, body: [String: Any], retried: Bool = false) async throws -> Data {
         let url = URL(string: "\(baseURL)\(path)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -76,8 +84,28 @@ final class APIClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
+
+        // Auto-refresh token on 401
+        if let http = response as? HTTPURLResponse, http.statusCode == 401, !retried {
+            if try await refreshAndRetry() {
+                return try await post(path, body: body, retried: true)
+            }
+        }
+
         try validateResponse(response, data: data)
         return data
+    }
+
+    /// Try to refresh the access token; returns true if refreshed successfully
+    private func refreshAndRetry() async throws -> Bool {
+        do {
+            try await AuthManager.shared.refreshAccessToken()
+            logInfo("Token refreshed, retrying request", context: "APIClient")
+            return true
+        } catch {
+            logWarning("Token refresh failed: \(error.localizedDescription)", context: "APIClient")
+            return false
+        }
     }
 
     private func addAuthHeaders(_ request: inout URLRequest) {
