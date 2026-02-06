@@ -47,6 +47,17 @@ struct TermApp {
         shellMenu.addItem(withTitle: "Close Tab", action: #selector(AppDelegate.closeTab), keyEquivalent: "w")
         shellMenu.addItem(withTitle: "Close Window", action: #selector(AppDelegate.closeWindow), keyEquivalent: "w").keyEquivalentModifierMask = [.command, .shift]
 
+        // Server menu
+        let serverMenuItem = NSMenuItem()
+        mainMenu.addItem(serverMenuItem)
+        let serverMenu = NSMenu(title: "Server")
+        serverMenuItem.submenu = serverMenu
+
+        serverMenu.addItem(withTitle: "Connect to Server...", action: #selector(AppDelegate.connectToServer), keyEquivalent: "k").keyEquivalentModifierMask = [.command, .shift]
+        serverMenu.addItem(withTitle: "Switch Project...", action: #selector(AppDelegate.switchProject), keyEquivalent: "")
+        serverMenu.addItem(NSMenuItem.separator())
+        serverMenu.addItem(withTitle: "Disconnect", action: #selector(AppDelegate.disconnectFromServer), keyEquivalent: "")
+
         // Edit menu
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)

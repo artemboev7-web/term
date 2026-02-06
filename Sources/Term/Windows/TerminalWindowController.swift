@@ -10,10 +10,14 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     /// Factory for creating remote data sources (nil = local mode)
     private var dataSourceFactory: (() -> TerminalDataSource)?
 
+    /// Whether this window is in remote mode
+    var isRemote: Bool { dataSourceFactory != nil }
+
     /// Remote mode initializer
     convenience init(dataSourceFactory: @escaping () -> TerminalDataSource) {
         self.init()
         self.dataSourceFactory = dataSourceFactory
+        setupConnectionStateObserver()
     }
 
     convenience init() {
@@ -270,6 +274,42 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     private func focusActiveTerminal() {
         if let currentVC = tabViewController.tabViewItems[safe: tabViewController.selectedTabViewItemIndex]?.viewController as? TerminalViewController {
             currentVC.focusTerminal()
+        }
+    }
+
+    // MARK: - Connection State Indicator
+
+    private func setupConnectionStateObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConnectionStateChange(_:)),
+            name: .connectionStateChanged,
+            object: nil
+        )
+    }
+
+    @objc private func handleConnectionStateChange(_ notification: Notification) {
+        guard let state = notification.userInfo?["state"] as? ConnectionState else { return }
+        updateConnectionIndicator(state)
+    }
+
+    private func updateConnectionIndicator(_ state: ConnectionState) {
+        guard isRemote else { return }
+
+        let subtitle: String
+        switch state {
+        case .connected:
+            subtitle = ""
+        case .connecting:
+            subtitle = "Connecting..."
+        case .reconnecting:
+            subtitle = "Reconnecting..."
+        case .disconnected:
+            subtitle = "Disconnected"
+        }
+
+        if #available(macOS 11.0, *) {
+            window?.subtitle = subtitle
         }
     }
 

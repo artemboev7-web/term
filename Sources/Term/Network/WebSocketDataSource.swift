@@ -7,7 +7,13 @@ import Foundation
 public final class WebSocketDataSource: TerminalDataSource {
     public weak var delegate: TerminalDataSourceDelegate?
 
-    public private(set) var connectionState: ConnectionState = .disconnected
+    public private(set) var connectionState: ConnectionState = .disconnected {
+        didSet {
+            guard connectionState != oldValue else { return }
+            delegate?.dataSource(self, didChangeState: connectionState)
+            NotificationCenter.default.post(name: .connectionStateChanged, object: self, userInfo: ["state": connectionState])
+        }
+    }
     public private(set) var cols: Int = 80
     public private(set) var rows: Int = 24
 

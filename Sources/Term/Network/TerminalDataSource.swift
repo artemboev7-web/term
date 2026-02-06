@@ -26,6 +26,20 @@ public protocol TerminalDataSourceDelegate: AnyObject {
 
     /// Connection/process ended
     func dataSource(_ source: TerminalDataSource, didDisconnect reason: DisconnectReason)
+
+    /// Connection state changed (for UI indicators)
+    func dataSource(_ source: TerminalDataSource, didChangeState state: ConnectionState)
+}
+
+// Default no-op for optional delegate methods
+public extension TerminalDataSourceDelegate {
+    func dataSource(_ source: TerminalDataSource, didChangeState state: ConnectionState) {}
+}
+
+// MARK: - Notification for UI
+
+public extension Notification.Name {
+    static let connectionStateChanged = Notification.Name("connectionStateChanged")
 }
 
 // MARK: - Connection State
