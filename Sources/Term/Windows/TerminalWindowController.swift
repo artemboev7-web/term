@@ -7,6 +7,15 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
     private var searchBar: SearchBarView?
     private var searchBarConstraint: NSLayoutConstraint?
 
+    /// Factory for creating remote data sources (nil = local mode)
+    private var dataSourceFactory: (() -> TerminalDataSource)?
+
+    /// Remote mode initializer
+    convenience init(dataSourceFactory: @escaping () -> TerminalDataSource) {
+        self.init()
+        self.dataSourceFactory = dataSourceFactory
+    }
+
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
@@ -93,6 +102,7 @@ class TerminalWindowController: NSWindowController, NSWindowDelegate {
         logInfo("Adding tab #\(tabCount) to window \(windowId)", context: "Window")
 
         let terminalVC = TerminalViewController()
+        terminalVC.dataSourceFactory = dataSourceFactory
         terminalVC.title = "zsh"
 
         let tabItem = NSTabViewItem(viewController: terminalVC)

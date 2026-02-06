@@ -34,6 +34,10 @@ let package = Package(
                 "Network/APIClient.swift",
                 "Network/AuthManager.swift",
                 "Network/ServerModels.swift",
+                // Login / Project Picker UI
+                "Views/LoginViewController.swift",
+                "Views/ProjectPickerViewController.swift",
+                "Windows/LoginWindowController.swift",
                 // Metal renderer
                 "Metal/ShaderTypes.swift",
                 "Metal/MetalRenderer.swift",

@@ -44,6 +44,10 @@ class Settings {
 
     var scrollbackLines: Int = 10000
 
+    // MARK: - Remote Mode
+
+    var remoteMode: Bool = false
+
     // MARK: - Rendering
 
     var useMetalRenderer: Bool = true {
@@ -111,7 +115,12 @@ class Settings {
             useMetalRenderer = defaults.bool(forKey: "useMetalRenderer")
         }
 
-        logInfo("Settings loaded: theme=\(theme.name), font=\(fontFamily) \(fontSize)pt, vibrancy=\(vibrancy), shell=\(shell), metal=\(useMetalRenderer)", context: "Settings")
+        // Remote mode
+        if defaults.object(forKey: "remoteMode") != nil {
+            remoteMode = defaults.bool(forKey: "remoteMode")
+        }
+
+        logInfo("Settings loaded: theme=\(theme.name), font=\(fontFamily) \(fontSize)pt, vibrancy=\(vibrancy), shell=\(shell), metal=\(useMetalRenderer), remote=\(remoteMode)", context: "Settings")
     }
 
     func save() {
@@ -125,6 +134,7 @@ class Settings {
         defaults.set(cursorBlink, forKey: "cursorBlink")
         defaults.set(scrollbackLines, forKey: "scrollbackLines")
         defaults.set(useMetalRenderer, forKey: "useMetalRenderer")
+        defaults.set(remoteMode, forKey: "remoteMode")
         logDebug("Settings saved successfully", context: "Settings")
     }
 }

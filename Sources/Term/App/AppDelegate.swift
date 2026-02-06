@@ -3,17 +3,27 @@ import AppKit
 class AppDelegate: NSObject, NSApplicationDelegate {
     var windows: [TerminalWindowController] = []
     var preferencesWindow: PreferencesWindowController?
+    var loginWindow: LoginWindowController?
+
+    // Remote mode state
+    private var currentProject: Project?
+    private var currentSessionId: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logInfo("Application launching...", context: "AppDelegate")
 
         // Загружаем настройки
         Settings.shared.load()
-        logInfo("Settings loaded: theme=\(Settings.shared.theme.name), font=\(Settings.shared.fontFamily), size=\(Settings.shared.fontSize)", context: "AppDelegate")
+        logInfo("Settings loaded: theme=\(Settings.shared.theme.name), font=\(Settings.shared.fontFamily), size=\(Settings.shared.fontSize), remote=\(Settings.shared.remoteMode)", context: "AppDelegate")
 
-        // Создаём первое окно
-        logInfo("Creating first window", context: "AppDelegate")
-        _ = createNewWindow()
+        if Settings.shared.remoteMode {
+            // Remote mode: show login/project picker
+            showLoginWindow()
+        } else {
+            // Local mode: create terminal as usual
+            logInfo("Creating first window (local mode)", context: "AppDelegate")
+            _ = createNewWindow()
+        }
 
         // Активируем приложение
         NSApp.activate(ignoringOtherApps: true)
@@ -144,6 +154,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func resetZoom() {
         Settings.shared.fontSize = 14
         logDebug("Reset Zoom: fontSize=14", context: "AppDelegate")
+    }
+
+    // MARK: - Remote Mode
+
+    func showLoginWindow() {
+        logInfo("Showing login window", context: "AppDelegate")
+        let login = LoginWindowController()
+        login.onConnect = { [weak self] project, sessionId in
+            self?.currentProject = project
+            self?.currentSessionId = sessionId
+            self?.loginWindow = nil
+            self?.createRemoteWindow(project: project, sessionId: sessionId)
+        }
+        loginWindow = login
+        login.showWindow(nil)
+        login.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func createRemoteWindow(project: Project, sessionId: String) {
+        logInfo("Creating remote window for \(project.displayName)", context: "AppDelegate")
+
+        let controller = TerminalWindowController(
+            dataSourceFactory: {
+                WebSocketDataSource(
+                    serverURL: AuthManager.shared.serverURL,
+                    sessionId: sessionId,
+                    authToken: AuthManager.shared.authToken ?? ""
+                )
+            }
+        )
+        windows.append(controller)
+        controller.showWindow(nil)
+        controller.window?.title = "\(project.displayName) — codeboev.tech"
+        controller.window?.makeKeyAndOrderFront(nil)
+        logInfo("Remote window created", context: "AppDelegate")
+    }
+
+    @objc func connectToServer() {
+        logDebug("Menu: Connect to Server", context: "AppDelegate")
+        showLoginWindow()
+    }
+
+    @objc func disconnectFromServer() {
+        logDebug("Menu: Disconnect", context: "AppDelegate")
+        AuthManager.shared.logout()
+        currentProject = nil
+        currentSessionId = nil
+        // Close all remote windows
+        for window in windows {
+            window.close()
+        }
+        windows.removeAll()
+    }
+
+    @objc func switchProject() {
+        logDebug("Menu: Switch Project", context: "AppDelegate")
+        showLoginWindow()
     }
 
     // MARK: - App Menu
