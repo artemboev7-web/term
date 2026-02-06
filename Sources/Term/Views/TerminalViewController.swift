@@ -6,6 +6,9 @@ class TerminalViewController: NSViewController {
     private var activePaneIndex = 0
     private let vcId = UUID().uuidString.prefix(8)
 
+    /// Optional data source for remote mode; when set, new panes use this factory
+    var dataSourceFactory: (() -> TerminalDataSource)?
+
     override func loadView() {
         logInfo("Loading TerminalViewController \(vcId)", context: "TerminalVC")
         // Container view with padding for v0-style border
@@ -62,7 +65,12 @@ class TerminalViewController: NSViewController {
 
     private func addTerminalPane() -> TerminalPaneView {
         logDebug("Adding terminal pane to VC \(vcId)", context: "TerminalVC")
-        let pane = TerminalPaneView()
+        let pane: TerminalPaneView
+        if let factory = dataSourceFactory {
+            pane = TerminalPaneView(dataSource: factory())
+        } else {
+            pane = TerminalPaneView()
+        }
         pane.delegate = self
         terminalPanes.append(pane)
         splitView.addArrangedSubview(pane)
@@ -99,7 +107,12 @@ class TerminalViewController: NSViewController {
             // Add panes to nested split
             nestedSplit.addArrangedSubview(activePane)
 
-            let newPane = TerminalPaneView()
+            let newPane: TerminalPaneView
+            if let factory = dataSourceFactory {
+                newPane = TerminalPaneView(dataSource: factory())
+            } else {
+                newPane = TerminalPaneView()
+            }
             newPane.delegate = self
             terminalPanes.append(newPane)
             nestedSplit.addArrangedSubview(newPane)

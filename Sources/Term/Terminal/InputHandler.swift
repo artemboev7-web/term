@@ -4,7 +4,7 @@ import AppKit
 
 /// Handles keyboard and mouse input for terminal
 public final class InputHandler {
-    public weak var ptyManager: PTYManager?
+    public weak var dataSource: TerminalDataSource?
     public var applicationCursorMode: Bool = false
     public var bracketedPasteMode: Bool = false
 
@@ -14,14 +14,14 @@ public final class InputHandler {
 
     /// Handle key event
     public func handleKeyDown(_ event: NSEvent) {
-        guard let pty = ptyManager else { return }
+        guard let ds = dataSource else { return }
 
         let modifiers = extractModifiers(event)
         let keyCode = event.keyCode
 
         // Check for special keys first
         if let termKey = mapKeyCode(keyCode) {
-            pty.sendKey(termKey, modifiers: modifiers)
+            ds.sendKey(termKey, modifiers: modifiers)
             return
         }
 
@@ -38,7 +38,7 @@ public final class InputHandler {
 
         // Regular character input
         if let chars = event.characters, !chars.isEmpty {
-            pty.write(chars)
+            ds.write(chars)
         }
     }
 
@@ -91,7 +91,7 @@ public final class InputHandler {
     }
 
     private func handleControlKey(_ event: NSEvent, modifiers: TerminalModifiers) {
-        guard let pty = ptyManager else { return }
+        guard let ds = dataSource else { return }
 
         // Get the character without modifiers
         guard let chars = event.charactersIgnoringModifiers,
@@ -103,31 +103,31 @@ public final class InputHandler {
         if scalar >= 0x61 && scalar <= 0x7A {
             // a-z
             let controlChar = UInt8(scalar - 0x60)
-            pty.write(Data([controlChar]))
+            ds.write(Data([controlChar]))
         } else if scalar >= 0x41 && scalar <= 0x5A {
             // A-Z
             let controlChar = UInt8(scalar - 0x40)
-            pty.write(Data([controlChar]))
+            ds.write(Data([controlChar]))
         } else {
             switch char {
-            case "@": pty.write(Data([0x00]))  // Ctrl-@
-            case "[": pty.write(Data([0x1B]))  // Ctrl-[ = ESC
-            case "\\": pty.write(Data([0x1C])) // Ctrl-\
-            case "]": pty.write(Data([0x1D]))  // Ctrl-]
-            case "^": pty.write(Data([0x1E]))  // Ctrl-^
-            case "_": pty.write(Data([0x1F]))  // Ctrl-_
-            case "?": pty.write(Data([0x7F]))  // Ctrl-? = DEL
+            case "@": ds.write(Data([0x00]))  // Ctrl-@
+            case "[": ds.write(Data([0x1B]))  // Ctrl-[ = ESC
+            case "\\": ds.write(Data([0x1C])) // Ctrl-\
+            case "]": ds.write(Data([0x1D]))  // Ctrl-]
+            case "^": ds.write(Data([0x1E]))  // Ctrl-^
+            case "_": ds.write(Data([0x1F]))  // Ctrl-_
+            case "?": ds.write(Data([0x7F]))  // Ctrl-? = DEL
             default:
                 // Pass through with modifier
                 if let special = mapKeyCode(event.keyCode) {
-                    pty.sendKey(special, modifiers: modifiers)
+                    ds.sendKey(special, modifiers: modifiers)
                 }
             }
         }
     }
 
     private func handleAltKey(_ event: NSEvent, modifiers: TerminalModifiers) {
-        guard let pty = ptyManager else { return }
+        guard let ds = dataSource else { return }
 
         // Alt/Option key: send ESC prefix + character
         guard let chars = event.charactersIgnoringModifiers,
@@ -136,22 +136,22 @@ public final class InputHandler {
         // ESC prefix
         var data = Data([0x1B])
         data.append(Data(String(char).utf8))
-        pty.write(data)
+        ds.write(data)
     }
 
     // MARK: - Paste
 
     /// Handle paste operation
     public func paste(_ text: String) {
-        guard let pty = ptyManager else { return }
+        guard let ds = dataSource else { return }
 
         if bracketedPasteMode {
             // Bracketed paste: ESC[200~ ... ESC[201~
-            pty.write("\u{1B}[200~")
-            pty.write(text)
-            pty.write("\u{1B}[201~")
+            ds.write("\u{1B}[200~")
+            ds.write(text)
+            ds.write("\u{1B}[201~")
         } else {
-            pty.write(text)
+            ds.write(text)
         }
     }
 
@@ -172,7 +172,7 @@ public final class InputHandler {
         mode: MouseMode,
         sgrMode: Bool
     ) {
-        guard let pty = ptyManager else { return }
+        guard let ds = dataSource else { return }
 
         // Encode mouse event
         let sequence: String
@@ -191,7 +191,7 @@ public final class InputHandler {
             sequence = "\u{1B}[M\(Character(UnicodeScalar(cb)!))\(Character(UnicodeScalar(cx)!))\(Character(UnicodeScalar(cy)!))"
         }
 
-        pty.write(sequence)
+        ds.write(sequence)
     }
 
     private func encodeButton(_ button: Int, pressed: Bool, modifiers: TerminalModifiers) -> Int {
@@ -215,20 +215,20 @@ public final class InputHandler {
         y: Int,
         sgrMode: Bool
     ) {
-        guard let pty = ptyManager else { return }
+        guard let ds = dataSource else { return }
 
         // Scroll is button 4 (up) or 5 (down) + 64
         let button = deltaY < 0 ? 64 : 65
 
         if sgrMode {
             let sequence = "\u{1B}[<\(button);\(x + 1);\(y + 1)M"
-            pty.write(sequence)
+            ds.write(sequence)
         } else {
             let cb = min(button + 32, 255)
             let cx = min(x + 33, 255)
             let cy = min(y + 33, 255)
             let sequence = "\u{1B}[M\(Character(UnicodeScalar(cb)!))\(Character(UnicodeScalar(cx)!))\(Character(UnicodeScalar(cy)!))"
-            pty.write(sequence)
+            ds.write(sequence)
         }
     }
 }

@@ -13,12 +13,12 @@ struct SearchMatch {
     let length: Int
 }
 
-class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
+class TerminalPaneView: NSView, TerminalEmulatorDelegate, TerminalDataSourceDelegate {
     weak var delegate: TerminalPaneViewDelegate?
 
     // Our custom terminal emulator
     private var terminal: TerminalEmulator!
-    private var ptyManager: PTYManager!
+    private var dataSource: TerminalDataSource!
     private var inputHandler: InputHandler!
 
     // Metal rendering
@@ -48,6 +48,18 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         setup()
     }
 
+    /// Create a pane with a custom data source (e.g. WebSocket for remote mode)
+    convenience init(dataSource: TerminalDataSource) {
+        self.init(frame: .zero)
+        // Replace the default local data source created in setup()
+        self.dataSource.stop()
+        self.dataSource = dataSource
+        dataSource.delegate = self
+        inputHandler.dataSource = dataSource
+        dataSource.start()
+        dataSource.resize(cols: terminal.cols, rows: terminal.rows)
+    }
+
     private func setup() {
         logInfo("Setting up terminal pane \(paneId)", context: "TerminalPane")
 
@@ -69,15 +81,17 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         terminal = TerminalEmulator(cols: cols, rows: rows)
         terminal.delegate = self
 
-        // Create PTY manager
+        // Create data source (local PTY by default)
         let shell = Settings.shared.shell
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        ptyManager = PTYManager(shell: shell, workingDirectory: homeDir)
-        ptyManager.delegate = self
+        let ptyManager = PTYManager(shell: shell, workingDirectory: homeDir)
+        let localDS = LocalDataSource(ptyManager: ptyManager)
+        localDS.delegate = self
+        dataSource = localDS
 
         // Create input handler
         inputHandler = InputHandler()
-        inputHandler.ptyManager = ptyManager
+        inputHandler.dataSource = dataSource
 
         // Setup Metal view
         setupMetalView()
@@ -95,7 +109,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     }
 
     deinit {
-        ptyManager.stop()
+        dataSource.stop()
         metalView?.pauseRendering()
         NotificationCenter.default.removeObserver(self)
         logDebug("Terminal pane \(paneId) deallocated", context: "TerminalPane")
@@ -178,14 +192,13 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // MARK: - Shell
 
     private func startShell() {
-        let shell = Settings.shared.shell
-        logInfo("Starting shell: \(shell)", context: "TerminalPane")
-
-        if ptyManager.start() {
-            ptyManager.resize(cols: terminal.cols, rows: terminal.rows)
-            logInfo("Shell process started", context: "TerminalPane")
+        logInfo("Starting data source", context: "TerminalPane")
+        dataSource.start()
+        dataSource.resize(cols: terminal.cols, rows: terminal.rows)
+        if dataSource.connectionState == .connected {
+            logInfo("Data source started", context: "TerminalPane")
         } else {
-            logError("Failed to start shell", context: "TerminalPane")
+            logError("Failed to start data source", context: "TerminalPane")
         }
     }
 
@@ -254,7 +267,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         if cols != terminal.cols || rows != terminal.rows {
             logDebug("Terminal size changed: \(cols)x\(rows)", context: "TerminalPane")
             terminal.resize(cols: cols, rows: rows)
-            ptyManager.resize(cols: cols, rows: rows)
+            dataSource.resize(cols: cols, rows: rows)
             metalView.markAllDirty()
         }
     }
@@ -292,10 +305,12 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     // MARK: - Focus
 
     func focus() {
+        logDebug("Pane \(paneId) focus() called, window=\(window != nil), acceptsFirstResponder=\(acceptsFirstResponder)", context: "TerminalPane")
         window?.makeFirstResponder(self)
+        let isFirst = window?.firstResponder === self
+        logDebug("Pane \(paneId) after makeFirstResponder: isFirstResponder=\(isFirst)", context: "TerminalPane")
         isActive = true
         delegate?.paneDidBecomeActive(self)
-        logDebug("Pane \(paneId) focused", context: "TerminalPane")
     }
 
     // MARK: - Keyboard Input
@@ -303,6 +318,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        logDebug("keyDown: keyCode=\(event.keyCode) chars='\(event.characters ?? "nil")'", context: "TerminalPane")
         inputHandler.handleKeyDown(event)
     }
 
@@ -319,7 +335,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
                 return true
             }
             // Otherwise send Ctrl-C
-            inputHandler.ptyManager?.write(Data([0x03]))
+            inputHandler.dataSource?.write(Data([0x03]))
             return true
 
         case "v":
@@ -425,7 +441,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
     }
 
     func terminal(_ terminal: TerminalEmulator, send data: Data) {
-        ptyManager.write(data)
+        dataSource.write(data)
     }
 
     func terminalDidUpdate(_ terminal: TerminalEmulator) {
@@ -437,9 +453,9 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         // Size change is handled elsewhere
     }
 
-    // MARK: - PTYManagerDelegate
+    // MARK: - TerminalDataSourceDelegate
 
-    func ptyManager(_ manager: PTYManager, didReceiveData data: Data) {
+    func dataSource(_ source: TerminalDataSource, didReceiveData data: Data) {
         // Reset scroll to bottom on new output
         if terminal.buffer.scrollOffset > 0 {
             terminal.buffer.scrollOffset = 0
@@ -447,8 +463,19 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         terminal.feed(data)
     }
 
-    func ptyManager(_ manager: PTYManager, processTerminated exitCode: Int32) {
-        logInfo("Shell process terminated with code \(exitCode)", context: "TerminalPane")
+    func dataSource(_ source: TerminalDataSource, didDisconnect reason: DisconnectReason) {
+        switch reason {
+        case .processExited(let code):
+            logInfo("Process terminated with code \(code)", context: "TerminalPane")
+        case .networkError(let error):
+            logError("Network error: \(error.localizedDescription)", context: "TerminalPane")
+        case .authExpired:
+            logWarning("Auth expired", context: "TerminalPane")
+        case .serverClosed:
+            logInfo("Server closed connection", context: "TerminalPane")
+        case .userRequested:
+            logInfo("User disconnected", context: "TerminalPane")
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.paneDidClose(self)
@@ -547,7 +574,7 @@ class TerminalPaneView: NSView, TerminalEmulatorDelegate, PTYManagerDelegate {
         let rows = max(1, Int(bounds.height / cellSize.height))
 
         terminal.resize(cols: cols, rows: rows)
-        ptyManager?.resize(cols: cols, rows: rows)
+        dataSource?.resize(cols: cols, rows: rows)
 
         // Update Metal view
         metalView?.frame = bounds
